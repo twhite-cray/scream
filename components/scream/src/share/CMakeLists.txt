@@ -17,14 +17,12 @@ set(SHARE_SRC
   field/field_manager.cpp
   grid/abstract_grid.cpp
   grid/grids_manager.cpp
-  grid/mesh_free_grids_manager.cpp
   grid/se_grid.cpp
   grid/point_grid.cpp
   grid/remap/abstract_remapper.cpp
   property_checks/property_check.cpp
   property_checks/field_nan_check.cpp
   property_checks/field_within_interval_check.cpp
-  util/scream_test_session.cpp
   util/scream_time_stamp.cpp
   util/scream_timing.cpp
   util/scream_utils.cpp
@@ -62,6 +60,13 @@ if (NOT WGET STREQUAL "WGET-NOTFOUND")
 endif()
 
 add_subdirectory(io)
+
+# This library contains stuff that is exclusively needed for unit testing
+add_library(scream_testing_support
+  grid/mesh_free_grids_manager.cpp
+  util/scream_test_session.cpp
+)
+target_link_libraries (scream_testing_support PUBLIC scream_io scream_share)
 
 if (NOT SCREAM_LIB_ONLY)
   add_subdirectory(tests)

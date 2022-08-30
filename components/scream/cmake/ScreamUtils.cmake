@@ -67,7 +67,7 @@ function(CreateUnitTestExec exec_name test_srcs scream_libs)
     ${SCREAM_F90_MODULES}
   )
 
-  set(test_libs "${scream_libs}")
+  set(test_libs "${scream_libs};scream_testing_support")
   list(APPEND test_libs "${SCREAM_TPL_LIBRARIES}")
 
   if (SCREAM_Fortran_FLAGS)
