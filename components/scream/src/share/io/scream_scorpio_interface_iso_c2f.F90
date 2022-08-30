@@ -242,6 +242,21 @@ contains
 
   end subroutine register_dimension_c2f
 !=====================================================================!
+  function has_dim_c2f(filename_in,dimname_in) result(has_it) bind(c)
+    use scream_scorpio_interface, only : has_dim
+    type(c_ptr), intent(in) :: filename_in
+    type(c_ptr), intent(in) :: dimname_in
+    logical(kind=c_bool)     :: has_it
+
+    character(len=256) :: filename
+    character(len=256) :: dimname
+
+    call convert_c_string(filename_in,filename)
+    call convert_c_string(dimname_in,dimname)
+    has_it = has_dim(filename,dimname)
+
+  end function has_dim_c2f
+!=====================================================================!
   function get_dimlen_c2f(filename_in,dimname_in) result(val) bind(c)
     use scream_scorpio_interface, only : get_dimlen
     type(c_ptr), intent(in) :: filename_in
@@ -256,6 +271,21 @@ contains
     val = get_dimlen(filename,dimname)
 
   end function get_dimlen_c2f
+!=====================================================================!
+  function has_var_c2f(filename_in,varname_in) result(has_it) bind(c)
+    use scream_scorpio_interface, only : has_var
+    type(c_ptr), intent(in) :: filename_in
+    type(c_ptr), intent(in) :: varname_in
+    logical(kind=c_bool)     :: has_it
+
+    character(len=256) :: filename
+    character(len=256) :: varname
+
+    call convert_c_string(filename_in,filename)
+    call convert_c_string(varname_in,varname)
+    has_it = has_var(filename,varname)
+
+  end function has_var_c2f
 !=====================================================================!
   subroutine eam_pio_enddef_c2f(filename_in) bind(c)
     use scream_scorpio_interface, only : eam_pio_enddef

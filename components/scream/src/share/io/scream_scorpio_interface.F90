@@ -84,7 +84,9 @@ module scream_scorpio_interface
             eam_update_time,             & ! Update the timestamp (i.e. time variable) for a given pio netCDF file
             get_int_attribute,           & ! Retrieves an integer global attribute from the nc file
             set_int_attribute,           & ! Writes an integer global attribute to the nc file
-            get_dimlen                     ! Returns the length of a specific dimension in a file
+            get_dimlen,                  & ! Returns the length of a specific dimension in a file
+            has_dim,                     & ! Checks if a given file has a given dimension
+            has_var                        ! Checks if a given file has a given variable
 
   private :: errorHandle
   ! Universal PIO variables for the module
@@ -1326,6 +1328,25 @@ contains
     endif
   end subroutine get_pio_atm_file
 !=====================================================================!
+  function has_dim(filename,dimname) result(has_it)
+    character(len=*), intent(in) :: filename
+    character(len=*), intent(in) :: dimname
+    logical                      :: has_it
+
+    type(pio_atm_file_t), pointer :: pio_atm_file
+    integer                       :: dim_id, ierr
+    logical                       :: found
+
+    call lookup_pio_atm_file(trim(filename),pio_atm_file,found)
+    if (.not.found) call errorHandle("[has_dim] ERROR: File "//trim(filename)//" not found",-999)
+    ierr = pio_inq_dimid(pio_atm_file%pioFileDesc,trim(dimname),dim_id)
+    if (ierr .eq. PIO_NOERR) then
+      has_it = .true.
+    else
+      has_it = .false.
+    endif
+  end function has_dim
+!=====================================================================!
   ! Retrieve the dimension length for a file.
   function get_dimlen(filename,dimname) result(val)
     character(len=*), intent(in) :: filename
@@ -1343,6 +1364,25 @@ contains
     ierr = pio_inq_dimlen(pio_atm_file%pioFileDesc,dim_id,val)
 
   end function get_dimlen
+!=====================================================================!
+  function has_var(filename,varname) result(has_it)
+    character(len=*), intent(in) :: filename
+    character(len=*), intent(in) :: varname
+    logical                      :: has_it
+
+    type(pio_atm_file_t), pointer :: pio_atm_file
+    integer                       :: var_id, ierr
+    logical                       :: found
+
+    call lookup_pio_atm_file(trim(filename),pio_atm_file,found)
+    if (.not.found) call errorHandle("[has_dim] ERROR: File "//trim(filename)//" not found",-999)
+    ierr = pio_inq_varid(pio_atm_file%pioFileDesc,trim(varname),var_id)
+    if (ierr .eq. PIO_NOERR) then
+      has_it = .true.
+    else
+      has_it = .false.
+    endif
+  end function has_var
 !=====================================================================!
   ! Write output to file based on type (int or real)
   ! --Note-- that any dimensionality could be written if it is flattened to 1D
