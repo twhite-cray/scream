@@ -61,8 +61,9 @@ if (NOT WGET STREQUAL "WGET-NOTFOUND")
     COMMENT "Downloading CF conventions XML file and building YAML dictionary...")
 endif()
 
+add_subdirectory(io)
+
 if (NOT SCREAM_LIB_ONLY)
   add_subdirectory(tests)
 endif()
 
-add_subdirectory(io)

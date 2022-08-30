@@ -17,7 +17,3 @@ target_compile_options(scream_io PUBLIC $<$<COMPILE_LANGUAGE:Fortran>:${SCREAM_F
 if (SCREAM_CIME_BUILD)
   target_link_libraries(scream_io PUBLIC csm_share)
 endif()
-
-if (NOT SCREAM_LIB_ONLY)
-  add_subdirectory(tests)
-endif()
