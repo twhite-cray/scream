@@ -186,6 +186,8 @@ void AtmosphereDriver::create_grids()
 
   // Create the grids manager
   auto& gm_params = m_atm_params.sublist("grids_manager");
+  auto& ic_params = m_atm_params.sublist("initial_conditions");
+  gm_params.set("Initial Conditions Filename",ic_params.get<std::string>("Filename"));
   const std::string& gm_type = gm_params.get<std::string>("Type");
   m_atm_logger->debug("  [EAMxx] Creating grid manager '" + gm_type + "' ...");
   m_grids_manager = GridsManagerFactory::instance().create(gm_type,m_atm_comm,gm_params);
@@ -201,40 +203,6 @@ void AtmosphereDriver::create_grids()
   // Set the grids in the processes. Do this by passing the grids manager.
   // Each process will grab what they need
   m_atm_process_group->set_grids(m_grids_manager);
-
-  // Load reference/surface pressure fractions if needed. This
-  // is done inside dynamics, however, for standalone runs
-  // without dynamics, these values could be needed.
-  auto& ic_pl = m_atm_params.sublist("initial_conditions");
-  const bool load_hybrid_coeffs = ic_pl.get<bool>("Load Hybrid Coefficients",false);
-  if (load_hybrid_coeffs) {
-    using view_1d_host = AtmosphereInput::view_1d_host;
-    using vos_t = std::vector<std::string>;
-    using namespace ShortFieldTagsNames;
-
-    auto phys_grid = m_grids_manager->get_grid("Physics");
-    const auto nlev = phys_grid->get_num_vertical_levels();
-
-    // Read vcoords into host views
-    ekat::ParameterList vcoord_reader_pl;
-    vcoord_reader_pl.set("Filename",ic_pl.get<std::string>("Filename"));
-    vcoord_reader_pl.set<vos_t>("Field Names",{"hyam","hybm"});
-    std::map<std::string,view_1d_host> host_views = {
-      { "hyam", view_1d_host("hyam",nlev) },
-      { "hybm", view_1d_host("hybm",nlev) }
-    };
-    std::map<std::string,FieldLayout> layouts = {
-      { "hyam", FieldLayout({LEV}, {nlev}) },
-      { "hybm", FieldLayout({LEV}, {nlev}) }
-    };
-
-    AtmosphereInput vcoord_reader(vcoord_reader_pl, phys_grid, host_views, layouts);
-    vcoord_reader.read_variables();
-    vcoord_reader.finalize();
-
-    Kokkos::deep_copy(phys_grid->get_geometry_data("hyam"), host_views["hyam"]);
-    Kokkos::deep_copy(phys_grid->get_geometry_data("hybm"), host_views["hybm"]);
-  }
 
   m_ad_status |= s_grids_created;
 

@@ -16,8 +16,6 @@ atmosphere_processes:
 
 grids_manager:
   Type: Mesh Free
-  number_of_global_columns:   218
-  number_of_vertical_levels:  72  # Will want to change to 128 when a valid unit test is available.
 
 initial_conditions:
   # The name of the file containing the initial conditions for this test.
@@ -25,7 +23,6 @@ initial_conditions:
   surf_sens_flux: 0.0
   surf_evap: 0.0
   Load Latitude: true
-  Load Hybrid Coefficients: true
 
 # The parameters for I/O control
 Scorpio:

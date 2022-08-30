@@ -3,12 +3,15 @@
 #include "dynamics/homme/physics_dynamics_remapper.hpp"
 #include "dynamics/homme/homme_dynamics_helpers.hpp"
 
+#include "share/io/scorpio_input.hpp"
 #include "share/grid/se_grid.hpp"
 #include "share/grid/point_grid.hpp"
 #include "share/grid/remap/inverse_remapper.hpp"
 
 // Get all Homme's compile-time dims
 #include "homme_dimensions.hpp"
+
+#include "PhysicalConstants.hpp"
 
 #include "ekat/std_meta/ekat_std_utils.hpp"
 
@@ -101,7 +104,7 @@ build_grids ()
   auto it = std::unique(pg_codes.begin(),pg_codes.end());
   const int* codes_ptr = pg_codes.data();
   init_grids_f90 (codes_ptr,std::distance(pg_codes.begin(),it));
-  
+
   // We know we need the dyn grid, so build it
   build_dynamics_grid ();
 
@@ -118,6 +121,72 @@ build_grids ()
   }
 
   this->alias_grid(pg_name,"Physics");
+
+  if (m_params.get<bool>("load_data_from_ic_file",true)) {
+    const auto& ic_file = m_params.get<std::string>("Initial Conditions Filename");
+
+    using vos_t = std::vector<std::string>;
+
+    ekat::ParameterList vcoord_reader_pl;
+    vcoord_reader_pl.set("Filename",ic_file);
+    vcoord_reader_pl.set<vos_t>("Field Names",{"hyai","hybi","hyam","hybm"});
+    AtmosphereInput vcoord_reader(m_comm,vcoord_reader_pl);
+
+    // Check that config-time nlev matches IC file
+    const int cmake_nlev = get_nlev_f90();
+    const int file_nlev  = scorpio::get_dimlen_c2f(ic_file.c_str(),"lev");
+    EKAT_REQUIRE_MSG (cmake_nlev==file_nlev,
+        "Error! Number of level in IC file does not match config time value.\n"
+        "  - ic file nlev: " + std::to_string(file_nlev) + "\n"
+        "  - cmake nlev  : " + std::to_string(cmake_nlev) + "\n");
+
+    const int nlev = cmake_nlev;
+
+    // Load hybrid coordinates from IC file
+    using KT = KokkosTypes<DefaultDevice>;
+    using view_1d_dev  = typename KT::template view_ND<Real,1>;
+    using view_1d_host = typename view_1d_dev::HostMirror;
+    using namespace ShortFieldTagsNames;
+
+    std::map<std::string,view_1d_dev> dev_views = {
+      { "hyai", view_1d_dev("hyai",nlev+1) },
+      { "hybi", view_1d_dev("hybi",nlev+1) },
+      { "hyam", view_1d_dev("hyam",nlev) },
+      { "hybm", view_1d_dev("hybm",nlev) }
+    };
+    std::map<std::string,view_1d_host> host_views = {
+      { "hyai", Kokkos::create_mirror_view(dev_views.at("hyai")) },
+      { "hybi", Kokkos::create_mirror_view(dev_views.at("hybi")) },
+      { "hyam", Kokkos::create_mirror_view(dev_views.at("hyam")) },
+      { "hybm", Kokkos::create_mirror_view(dev_views.at("hybm")) }
+    };
+    std::map<std::string,FieldLayout> layouts = {
+      { "hyai", FieldLayout({ILEV},{nlev+1}) },
+      { "hybi", FieldLayout({ILEV},{nlev+1}) },
+      { "hyam", FieldLayout({LEV}, {nlev}) },
+      { "hybm", FieldLayout({LEV}, {nlev}) }
+    };
+
+    vcoord_reader.init(get_grid("Dynamics"),host_views,layouts);
+    vcoord_reader.read_variables();
+    vcoord_reader.finalize();
+
+    for (const auto& n : {"hyai","hybi","hyam","hybm"}) {
+      Kokkos::deep_copy(dev_views.at(n),host_views.at(n));
+      for (auto gn : {"Physics", "Dynamics", "Physics GLL"}) {
+        auto grid = get_grid_nonconst(gn);
+        grid->set_geometry_data(n,dev_views.at(n));
+      }
+    }
+
+    // Set vcoords in f90
+    const auto ps0 = Homme::PhysicalConstants::p0;
+    prim_set_hvcoords_f90 (ps0,
+                           host_views["hyai"].data(),
+                           host_views["hybi"].data(),
+                           host_views["hyam"].data(),
+                           host_views["hybm"].data());
+  }
 
   // Clean up temporaries used during grid initialization
   cleanup_grid_init_data_f90 ();
@@ -208,17 +277,10 @@ build_physics_grid (const ci_string& type, const ci_string& rebalance) {
   AbstractGrid::geo_view_type  lat("lat",nlcols);
   AbstractGrid::geo_view_type  lon("lon",nlcols);
   AbstractGrid::geo_view_type  area("area",nlcols);
-  AbstractGrid::geo_view_type  hyam("hyam",nlev);
-  AbstractGrid::geo_view_type  hybm("hybm",nlev);
   auto h_dofs = Kokkos::create_mirror_view(dofs);
   auto h_lat  = Kokkos::create_mirror_view(lat);
   auto h_lon  = Kokkos::create_mirror_view(lon);
   auto h_area = Kokkos::create_mirror_view(area);
-
-  // For the following, set to NaN. They will need to be grabbed
-  // from input files later.
-  Kokkos::deep_copy(hyam, std::nan(""));
-  Kokkos::deep_copy(hybm, std::nan(""));
 
   // Get all specs of phys grid cols (gids, coords, area)
   get_phys_grid_data_f90 (pg_code, h_dofs.data(), h_lat.data(), h_lon.data(), h_area.data());
@@ -246,8 +308,6 @@ build_physics_grid (const ci_string& type, const ci_string& rebalance) {
   phys_grid->set_geometry_data("lat",lat);
   phys_grid->set_geometry_data("lon",lon);
   phys_grid->set_geometry_data("area",area);
-  phys_grid->set_geometry_data("hyam",hyam);
-  phys_grid->set_geometry_data("hybm",hybm);
 
   add_grid(phys_grid);
 }

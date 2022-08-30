@@ -23,8 +23,6 @@ atmosphere_processes:
 
 grids_manager:
   Type: Mesh Free
-  number_of_global_columns: 218
-  number_of_vertical_levels: 72
 
 # Specifications for setting initial conditions
 initial_conditions:
