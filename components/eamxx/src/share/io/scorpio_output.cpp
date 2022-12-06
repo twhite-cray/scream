@@ -129,7 +129,7 @@ AtmosphereOutput (const ekat::Comm& comm, const ekat::ParameterList& params,
         "Error! Bad formatting of output yaml file. Missing 'Fields->$grid_name` sublist.\n");
   }
 
-  // Check if remapping and if so create the appropriate remapper 
+  // Check if remapping and if so create the appropriate remapper
   // Note: We currently support three remappers
   //   - vertical remapping from file
   //   - horizontal remapping from file
@@ -149,13 +149,13 @@ AtmosphereOutput (const ekat::Comm& comm, const ekat::ParameterList& params,
   set_diagnostics();
 
   // Setup remappers - if needed
-  if (use_vertical_remap_from_file) {  
+  if (use_vertical_remap_from_file) {
     using namespace ShortFieldTagsNames;
     // We build a remapper, to remap fields from the fm grid to the io grid
     auto vert_remap_file   = params.get<std::string>("vertical_remap_file");
     auto f_lev = get_field("p_mid","sim");
     auto f_ilev = get_field("p_int","sim");
-    m_vert_remapper = std::make_shared<VerticalRemapper>(io_grid,vert_remap_file,f_lev,f_ilev); // We use the default mask value 
+    m_vert_remapper = std::make_shared<VerticalRemapper>(io_grid,vert_remap_file,f_lev,f_ilev); // We use the default mask value
     io_grid = m_vert_remapper->get_tgt_grid();
     set_grid(io_grid);
 
@@ -178,7 +178,7 @@ AtmosphereOutput (const ekat::Comm& comm, const ekat::ParameterList& params,
       const auto  name    = tgt_fid.name();
       const auto  src     = get_field(name,"sim");
       const auto  packsize = src.get_header().get_alloc_properties().get_largest_pack_size();
-      io_fm->register_field(FieldRequest(tgt_fid,packsize)); 
+      io_fm->register_field(FieldRequest(tgt_fid,packsize));
     }
     // Now end registration of variables in io_fm
     io_fm->registration_ends();
@@ -189,7 +189,7 @@ AtmosphereOutput (const ekat::Comm& comm, const ekat::ParameterList& params,
       auto tgt = io_fm->get_field(src.name());
       m_vert_remapper->bind_field(src,tgt);
     }
-    
+
     // Set the field manager for IO and add an entry "after vertical remapping"
     set_field_manager(io_fm,"io");
     set_field_manager(io_fm,"after_vertical_remap");
@@ -238,7 +238,7 @@ AtmosphereOutput (const ekat::Comm& comm, const ekat::ParameterList& params,
               break;
             }
           }
-          // If we haven't already add this mask, we do that now. 
+          // If we haven't already add this mask, we do that now.
           if (!found) {
             mask_fields.push_back(f_mask);
             mask_map.emplace(f.name(),mask_fields.size()-1);
@@ -295,7 +295,7 @@ AtmosphereOutput (const ekat::Comm& comm, const ekat::ParameterList& params,
 
     // Reset the IO field manager
     set_field_manager(io_fm,"io");
-  } 
+  }
 
   // Setup I/O structures
   init ();
@@ -386,6 +386,7 @@ void AtmosphereOutput::run (const std::string& filename, const bool is_write_ste
     const auto& dims = layout.dims();
     const auto  rank = layout.rank();
 
+    if (m_comm.am_i_root()) std::cout << name << std::endl;
     // Safety check: make sure that the field was written at least once before using it.
     EKAT_REQUIRE_MSG (!m_add_time_dim || field.get_header().get_tracking().get_time_stamp().is_valid(),
         "Error! Time-dependent output field '" + name + "' has not been initialized yet\n.");
@@ -590,7 +591,7 @@ set_grid (const std::shared_ptr<const AbstractGrid>& grid)
 
 void AtmosphereOutput::register_dimensions(const std::string& name)
 {
-/* 
+/*
  * Checks that the dimensions associated with a specific variable will be registered with IO file.
  * INPUT:
  *   field_manager: is a pointer to the field_manager for this simulation.
@@ -620,7 +621,7 @@ void AtmosphereOutput::register_dimensions(const std::string& name)
         tag_len = layout.dim(i);
       }
       m_dims[get_nc_tag_name(tags[i],dims[i])] = std::make_pair(tag_len,is_partitioned);
-    } else {  
+    } else {
       EKAT_REQUIRE_MSG(m_dims.at(tag_name).first==dims[i] or is_partitioned,
         "Error! Dimension " + tag_name + " on field " + name + " has conflicting lengths");
     }
@@ -723,7 +724,6 @@ register_variables(const std::string& filename,
       }
       vec_of_dims.push_back(tag_name); // Add dimensions string to vector of dims.
     }
-
     // TODO: Reverse order of dimensions to match flip between C++ -> F90 -> PIO,
     // may need to delete this line when switching to fully C++/C implementation.
     std::reverse(vec_of_dims.begin(),vec_of_dims.end());
@@ -821,9 +821,9 @@ AtmosphereOutput::get_var_dof_offsets(const FieldLayout& layout)
   } else {
     // This field is *not* defined over columns, so it is not partitioned.
     std::iota(var_dof.begin(),var_dof.end(),0);
-  } 
+  }
 
-  return var_dof; 
+  return var_dof;
 }
 /* ---------------------------------------------------------- */
 void AtmosphereOutput::set_degrees_of_freedom(const std::string& filename)
@@ -840,7 +840,7 @@ void AtmosphereOutput::set_degrees_of_freedom(const std::string& filename)
     m_dofs.emplace(std::make_pair(name,var_dof.size()));
   }
 
-  /* TODO: 
+  /* TODO:
    * Gather DOF info directly from grid manager
   */
 } // set_degrees_of_freedom
@@ -909,9 +909,12 @@ void AtmosphereOutput::set_diagnostics()
   const auto sim_field_mgr = get_field_manager("sim");
   // Create all diagnostics
   for (const auto& fname : m_fields_names) {
+    if(m_comm.am_i_root()) std::cout << fname << "      ";
     if (!sim_field_mgr->has_field(fname)) {
+      if(m_comm.am_i_root()) std::cout << fname;
       create_diagnostic(fname);
     }
+    if(m_comm.am_i_root()) std::cout << std::endl;
   }
 
   // Set required fields for all diagnostics
@@ -949,7 +952,7 @@ create_diagnostic (const std::string& diag_field_name) {
   auto lev_and_idx = ekat::split(last,'_');
   auto pos = lev_and_idx[0].find_first_not_of("0123456789");
   auto lev_str = lev_and_idx[0].substr(pos);
-  
+
   if (last=="tom" || last=="bot" || lev_str=="lev") {
     // Diagnostic is a horizontal slice at a specific level
     diag_name = "FieldAtLevel";
@@ -1002,6 +1005,8 @@ create_diagnostic (const std::string& diag_field_name) {
     m_diag_depends_on_diags[diag_field_name].resize(0);
   }
 
+  if(m_comm.am_i_root()) std::cout << "HERE1: " << diag_name << std::endl;
+
   // Create the diagnostic
   auto diag = diag_factory.create(diag_name,m_comm,params);
   diag->set_grids(m_grids_manager);
@@ -1013,6 +1018,8 @@ create_diagnostic (const std::string& diag_field_name) {
     m_fields_alt_name.emplace(diag->name(),diag_field_name);
     m_fields_alt_name.emplace(diag_field_name,diag->name());
   }
+
+  if(m_comm.am_i_root()) std::cout << "HERE2" << diag_name << std::endl;
 }
 
 } // namespace scream

@@ -86,6 +86,8 @@ setup (const ekat::Comm& io_comm, const ekat::ParameterList& params,
       EKAT_REQUIRE_MSG (field_mgrs.find(gname)!=field_mgrs.end(),
           "Error! Output requested on grid '" + gname + "', but no field manager is available for such grid.\n");
 
+        std::cout << "SOM: " << gname << std::endl;
+
       auto output = std::make_shared<output_type>(m_io_comm,m_params,field_mgrs.at(gname),grids_mgr);
       m_output_streams.push_back(output);
     }

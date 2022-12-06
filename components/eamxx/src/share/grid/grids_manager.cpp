@@ -35,6 +35,8 @@ create_remapper (const grid_ptr_type& from_grid,
 
   remapper_ptr_type remapper;
 
+  std::cout << "Create Remapper: " << from_grid->name() << ", " << to_grid->name() << std::endl;
+
   if (from_grid->name()==to_grid->name()) {
     // We can handle the identity remapper from here
     remapper = std::make_shared<IdentityRemapper>(from_grid);
@@ -86,7 +88,7 @@ get_grid_nonconst (const std::string& name) const
       "  - grid name    : " + name   + "\n");
 
   return g;
-  
+
 }
 
 void GridsManager::

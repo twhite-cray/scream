@@ -14,8 +14,7 @@ Time Stepping:
 
 initial_conditions:
   Filename: ${SCREAM_DATA_DIR}/init/${EAMxx_tests_IC_FILE_72lev}
-  topography_filename: ${TOPO_DATA_DIR}/USGS-gtopo30_ne4np4_16x.c20160612.nc
-  get_topo_from_file: true
+  topography_filename: ${TOPO_DATA_DIR}/USGS-gtopo30_ne4np4pg2_16x_converted.c20200527.nc
   surf_evap: 0.0
   surf_sens_flux: 0.0
   precip_liq_surf_mass: 0.0
@@ -56,7 +55,8 @@ atmosphere_processes:
 
 grids_manager:
   Type: Homme
-  physics_grid_type: GLL
+  physics_grid_type: PG2
+  physics_grid_rebalance: None
   dynamics_namelist_file_name: namelist.nl
   vertical_coordinate_filename: IC_FILE
 
