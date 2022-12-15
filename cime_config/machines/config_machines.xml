@@ -1502,6 +1502,7 @@
     <DESC>Sandia GPU testbed</DESC>
     <NODENAME_REGEX>weaver</NODENAME_REGEX>
     <OS>LINUX</OS>
+    <PROXY>proxy.sandia.gov:80</PROXY>
     <COMPILERS>gnugpu</COMPILERS>
     <MPILIBS>openmpi</MPILIBS>
     <SAVE_TIMING_DIR>/home/projects/e3sm/timings</SAVE_TIMING_DIR>
