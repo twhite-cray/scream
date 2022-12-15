@@ -644,7 +644,7 @@
        <arg flag="-n" name=" $TOTALPES"/>
      </submit_args>
      <queues>
-       <queue walltimemax="02:00" default="true">rhel7W</queue>
+       <queue walltimemax="02:00" default="true">rhel8</queue>
      </queues>
    </batch_system>
 
