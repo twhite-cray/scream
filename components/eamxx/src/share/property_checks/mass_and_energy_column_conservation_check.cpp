@@ -33,6 +33,12 @@ MassAndEnergyColumnConservationCheck (const std::shared_ptr<const AbstractGrid>&
   m_current_mass   = view_1d<Real> ("current_total_water",  m_num_cols);
   m_current_energy = view_1d<Real> ("current_total_energy", m_num_cols);
 
+  m_min_max_rel_error_with_sign = view_1d<Real> ("", 2);
+  auto min_max_h = Kokkos::create_mirror_view(m_min_max_rel_error_with_sign);
+  min_max_h(0) = Kokkos::reduction_identity<Real>::min();
+  min_max_h(1) = Kokkos::reduction_identity<Real>::max();
+  Kokkos::deep_copy(m_min_max_rel_error_with_sign, min_max_h);
+
   m_fields["pseudo_density"] = pseudo_density_ptr;
   m_fields["ps"]             = ps_ptr;
   m_fields["phis"]           = phis_ptr;
@@ -132,6 +138,8 @@ PropertyCheck::ResultAndMsg MassAndEnergyColumnConservationCheck::check() const
   const auto ncols = m_num_cols;
   const auto nlevs = m_num_levs;
 
+  auto min_max_err = m_min_max_rel_error_with_sign;
+
   EKAT_REQUIRE_MSG(!std::isnan(m_dt), "Error! Timestep dt must be set in MassAndEnergyConservationCheck "
                                       "before running check().");
   auto dt = m_dt;
@@ -183,12 +191,20 @@ PropertyCheck::ResultAndMsg MassAndEnergyColumnConservationCheck::check() const
     // Calculate relative error of total mass
     const Real rel_err_mass = std::abs(tm-tm_exp)/previous_tm;
 
+    const Real rel_err_mass_with_sign = (tm-tm_exp)/previous_tm;
+    if (min_max_err(0) > rel_err_mass_with_sign) min_max_err(0) = rel_err_mass_with_sign;
+    if (min_max_err(1) < rel_err_mass_with_sign) min_max_err(1) = rel_err_mass_with_sign;
+
+
     // Test relative error against current max value
     if (rel_err_mass > result.val) {
       result.val = rel_err_mass;
       result.loc = i;
     }
   }, maxloc_t(maxloc_mass));
+
+  const auto min_max_h = Kokkos::create_mirror_view_and_copy(HostDevice(), min_max_err);
+  std::cout << "MASS REL ERR MIN: " << min_max_h(0) << "    MAX: " << min_max_h(1) << std::endl;
 
   // Energy error calculation
   Kokkos::parallel_reduce(policy, KOKKOS_LAMBDA (const KT::MemberType& team,

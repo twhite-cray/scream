@@ -122,6 +122,9 @@ protected:
   // should be updated before a process is run.
   view_1d<Real> m_current_energy;
   view_1d<Real> m_current_mass;
+
+  view_1d<Real> m_min_max_rel_error_with_sign;
+
 }; // class EnergyConservationCheck
 
 } // namespace scream
