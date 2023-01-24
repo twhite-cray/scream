@@ -182,10 +182,11 @@ PropertyCheck::ResultAndMsg MassAndEnergyColumnConservationCheck::check() const
 
     // Calculate relative error of total mass
     const Real rel_err_mass = std::abs(tm-tm_exp)/previous_tm;
+    const Real rel_err_mass_with_sign = (tm-tm_exp)/previous_tm;
 
     // Test relative error against current max value
     if (rel_err_mass > result.val) {
-      result.val = rel_err_mass;
+      result.val = rel_err_mass_with_sign;//rel_err_mass;
       result.loc = i;
     }
   }, maxloc_t(maxloc_mass));
@@ -214,17 +215,18 @@ PropertyCheck::ResultAndMsg MassAndEnergyColumnConservationCheck::check() const
 
     // Calculate relative error of total energy
     const Real rel_err_energy = std::abs(te-te_exp)/previous_te;
+    const Real rel_err_energy_with_sign = (te-te_exp)/previous_te;
 
     // Test relative error against current max value
     if (rel_err_energy > result.val) {
-      result.val = rel_err_energy;
+      result.val = rel_err_energy_with_sign;//rel_err_energy;
       result.loc = i;
     }
   }, maxloc_t(maxloc_energy));
 
   // Check if mass and/or energy values were below tolerance.
-  const bool mass_below_tol   = (maxloc_mass.val   < m_mass_tol);
-  const bool energy_below_tol = (maxloc_energy.val < m_energy_tol);
+  const bool mass_below_tol   = (std::abs(maxloc_mass.val)   < m_mass_tol);
+  const bool energy_below_tol = (std::abs(maxloc_energy.val) < m_energy_tol);
 
   PropertyCheck::ResultAndMsg res_and_msg;
   if (mass_below_tol && energy_below_tol) {
