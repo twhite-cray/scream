@@ -140,14 +140,14 @@ void Functions<S,D>::update_prognostics_implicit(
       tke_s(nlev-1)    += cmnfac*wtke_sfc;
     });
 
-    Kokkos::parallel_for(Kokkos::TeamThreadRange(team, num_qtracers), [&] (const Int& q) {
+    Kokkos::parallel_for(Kokkos::TeamVectorRange(team, num_qtracers), [&] (const Int& q) {
       qtracers_s(q, nlev-1) += cmnfac*wtracer_sfc_s(q);
     });
   }
 
   // Store RHS values in wind_rhs and qtracers_rhs for 1st and 2nd solve respectively
   team.team_barrier();
-  Kokkos::parallel_for(Kokkos::TeamThreadRange(team, nlev), [&] (const Int& k) {
+  Kokkos::parallel_for(Kokkos::TeamVectorRange(team, nlev), [&] (const Int& k) {
     wind_rhs_s(k,0) = u_wind_s(k);
     wind_rhs_s(k,1) = v_wind_s(k);
 
@@ -184,7 +184,7 @@ void Functions<S,D>::update_prognostics_implicit(
 
   // Copy RHS values back into output variables
   team.team_barrier();
-  Kokkos::parallel_for(Kokkos::TeamThreadRange(team, nlev), [&] (const Int& k) {
+  Kokkos::parallel_for(Kokkos::TeamVectorRange(team, nlev), [&] (const Int& k) {
     u_wind_s(k) = wind_rhs_s(k, 0);
     v_wind_s(k) = wind_rhs_s(k, 1);
 

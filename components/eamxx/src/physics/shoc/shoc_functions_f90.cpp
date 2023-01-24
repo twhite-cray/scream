@@ -2167,7 +2167,7 @@ void update_prognostics_implicit_f(Int shcol, Int nlev, Int nlevi, Int num_trace
 
   Kokkos::parallel_for(policy, KOKKOS_LAMBDA(const MemberType& team) {
     const int i = team.league_rank();
-    Kokkos::parallel_for(Kokkos::TeamThreadRange(team, nlev), [&] (const Int& k) {
+    Kokkos::parallel_for(Kokkos::TeamVectorRange(team, nlev), [&] (const Int& k) {
       Kokkos::parallel_for(Kokkos::ThreadVectorRange(team, num_tracer), [&] (const Int& q) {
         qtracers_cxx_d_s(i,q,k) = qtracers_f90_d_s(i,k,q);
       });
@@ -2216,7 +2216,7 @@ void update_prognostics_implicit_f(Int shcol, Int nlev, Int nlevi, Int num_trace
   // Transpose tracers
   Kokkos::parallel_for(policy, KOKKOS_LAMBDA(const MemberType& team) {
     const int i = team.league_rank();
-    Kokkos::parallel_for(Kokkos::TeamThreadRange(team, nlev), [&] (const Int& k) {
+    Kokkos::parallel_for(Kokkos::TeamVectorRange(team, nlev), [&] (const Int& k) {
       Kokkos::parallel_for(Kokkos::ThreadVectorRange(team, num_tracer), [&] (const Int& q) {
         qtracers_f90_d_s(i,k,q) = qtracers_cxx_d_s(i,q,k);
       });
@@ -2822,7 +2822,7 @@ Int shoc_main_f(Int shcol, Int nlev, Int nlevi, Real dtime, Int nadv, Int npbl, 
   const auto policy = ekat::ExeSpaceUtils<ExeSpace>::get_default_team_policy(shcol, nlev_packs);
   Kokkos::parallel_for(policy, KOKKOS_LAMBDA(const MemberType& team) {
     const Int i = team.league_rank();
-    Kokkos::parallel_for(Kokkos::TeamThreadRange(team, nlev), [&] (const Int& k) {
+    Kokkos::parallel_for(Kokkos::TeamVectorRange(team, nlev), [&] (const Int& k) {
       horiz_wind_d_s(i,0,k) = u_wind_d_s(i,k);
       horiz_wind_d_s(i,1,k) = v_wind_d_s(i,k);
 
@@ -2893,7 +2893,7 @@ Int shoc_main_f(Int shcol, Int nlev, Int nlevi, Real dtime, Int nadv, Int npbl, 
   // Transpose tracers
   Kokkos::parallel_for(policy, KOKKOS_LAMBDA(const MemberType& team) {
     const Int i = team.league_rank();
-    Kokkos::parallel_for(Kokkos::TeamThreadRange(team, nlev), [&] (const Int& k) {
+    Kokkos::parallel_for(Kokkos::TeamVectorRange(team, nlev), [&] (const Int& k) {
       u_wind_d_s(i,k) = horiz_wind_d_s(i,0,k);
       v_wind_d_s(i,k) = horiz_wind_d_s(i,1,k);
 
