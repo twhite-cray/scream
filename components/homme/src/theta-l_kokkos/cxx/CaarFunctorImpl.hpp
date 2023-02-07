@@ -141,6 +141,8 @@ struct CaarFunctorImpl {
       , m_policy_post (0,m_num_elems*NP*NP)
       , m_tu(m_policy_pre)
   {
+    std::cout << "PGRAD_CORRECTION: " << m_pgrad_correction << std::endl;
+
     // Initialize equation of state
     m_eos.init(params.theta_hydrostatic_mode,m_hvcoord);
 
@@ -157,7 +159,9 @@ struct CaarFunctorImpl {
       , m_policy_pre (Homme::get_default_team_policy<ExecSpace,TagPreExchange>(m_num_elems))
       , m_policy_post (0,num_elems*NP*NP)
       , m_tu(m_policy_pre)
-  {}
+  {
+    std::cout << "PGRAD_CORRECTION: " << m_pgrad_correction << std::endl;
+  }
 
   void setup (const Elements &elements, const Tracers &/*tracers*/,
               const ReferenceElement &ref_FE, const HybridVCoord &hvcoord,
