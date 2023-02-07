@@ -778,6 +778,7 @@ recursive subroutine get_field(elem,name,field,hvcoord,nt,ntQ)
    call phi_from_eos(hvcoord, phis, temp, dp_ref, phi_ref)
 
    ! keep profiles, based on the value of hv_ref_profiles
+   write(*,*) "HV_REF_PROFILES:",hv_ref_profiles
    if (hv_ref_profiles == 0) then
      ! keep phi profile, but dont use theta and dp:
      theta_ref = 0
