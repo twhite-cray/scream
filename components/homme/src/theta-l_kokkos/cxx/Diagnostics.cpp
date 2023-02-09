@@ -11,6 +11,8 @@
 #include "utilities/SyncUtils.hpp"
 #include "utilities/SubviewUtils.hpp"
 
+#include "profiling.hpp"
+
 namespace Homme
 {
 
@@ -98,8 +100,10 @@ void Diagnostics::sync_diags_to_host () {
 
 void Diagnostics::run_diagnostics (const bool before_advance, const int ivar)
 {
+  GPTLstart("prim_diag");
   prim_diag_scalars(before_advance, ivar);
   prim_energy_halftimes(before_advance, ivar);
+  GPTLstop("prim_diag");
 }
 
 void Diagnostics::prim_diag_scalars (const bool before_advance, const int ivar)
@@ -176,7 +180,9 @@ void Diagnostics::prim_energy_halftimes (const bool before_advance, const int iv
 
   Kokkos::parallel_for(m_policy, *this);
 
-  Kokkos::deep_copy(h_KEner, m_KEner);
+  Kokkos::deep_copy(h_IEner,m_IEner);
+  Kokkos::deep_copy(h_PEner,m_PEner);
+  Kokkos::deep_copy(h_KEner,m_KEner);
 }
 
 } // namespace Homme
