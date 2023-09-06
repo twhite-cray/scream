@@ -15,10 +15,10 @@
 
 namespace Homme {
 
-class FunctorsBuffersManager;
+struct FunctorsBuffersManager;
 class ComposeTransportImpl;
-class SimulationParams;
-class TimeLevel;
+struct SimulationParams;
+struct TimeLevel;
 
 class ComposeTransport {
 public:
