@@ -346,12 +346,9 @@ struct CaarFunctorImpl {
     profiling_resume();
 
     GPTLstart("caar compute");
-    //printf("TREY m_pgrad_correction %d m_rsplit %d m_theta_hydrostatic_mode %d m_theta_advection_form %d AdvectionForm::NonConservative %d\n",m_pgrad_correction,m_rsplit,m_theta_hydrostatic_mode,m_theta_advection_form,AdvectionForm::NonConservative);
     int nerr = 0;
-    if ((true) && (!m_pgrad_correction) && (m_rsplit > 0) && (!m_theta_hydrostatic_mode) && (m_theta_advection_form == AdvectionForm::NonConservative)) {
 
-#if 1
-      //printf("TREY caar compute\n");
+    if ((true) && (m_rsplit > 0) && (!m_theta_hydrostatic_mode) && (m_theta_advection_form == AdvectionForm::NonConservative)) {
 
       static_assert(VECTOR_SIZE == 1, "VECTOR_SIZE != 1");
       constexpr int NPNP = NP * NP;
@@ -396,9 +393,7 @@ struct CaarFunctorImpl {
       auto &sphere_dinv = m_sphere_ops.m_dinv;
       auto &sphere_dvv = m_sphere_ops.dvv;
       auto &sphere_metdet = m_sphere_ops.m_metdet;
-      //const Real sphere_rrearth = m_sphere_ops.m_rrearth;
       const Real sphere_scale_factor_inv = m_sphere_ops.m_scale_factor_inv;
-      const Real sphere_laplacian_rigid_factor = m_sphere_ops.m_laplacian_rigid_factor;
 
       auto &state_dp3d = m_state.m_dp3d;
       auto &state_phinh_i = m_state.m_phinh_i;
@@ -406,12 +401,12 @@ struct CaarFunctorImpl {
       auto &state_vtheta_dp = m_state.m_vtheta_dp;
       auto &state_w_i = m_state.m_w_i;
 
-      const Real div1mkappa = 1.0 / (1.0 - PhysicalConstants::kappa);
-      const Real divp0 = 1.0 / PhysicalConstants::p0;
+      constexpr Real div1mkappa = 1.0 / (1.0 - PhysicalConstants::kappa);
+      constexpr Real divp0 = 1.0 / PhysicalConstants::p0;
       const Real dscale = m_data.scale1 - m_data.scale2;
       const Real gscale1 = PhysicalConstants::g * m_data.scale1;
       const Real gscale2 = PhysicalConstants::g * m_data.scale2;
-      const Real pi_i00 = m_hvcoord.ps0*m_hvcoord.hybrid_ai0;
+      const Real pi_i00 = m_hvcoord.ps0 * m_hvcoord.hybrid_ai0;
       const Real scale1_dt = m_data.scale1 * m_data.dt;
 
       // compute_div_vdp
@@ -688,6 +683,9 @@ struct CaarFunctorImpl {
         });
 
       // compute_v_tens
+
+      const bool pgrad_correction = m_pgrad_correction;
+
       Kokkos::parallel_for(
         "caar compute v_tens",
         TeamPolicy(m_num_elems, NPNP, WARP_SIZE).
@@ -717,7 +715,6 @@ struct CaarFunctorImpl {
 
           const Real *const v00 = &state_v(ie,data_n0,0,ix,iy,0)[0];
           const Real *const v01 = &state_v(ie,data_n0,1,ix,iy,0)[0];
-          const Real *const dp3d0 = &state_dp3d(ie,data_n0,ix,iy,0)[0];
 
           const Real dinv00 = sphere_dinv(ie,0,0,ix,iy);
           const Real dinv01 = sphere_dinv(ie,0,1,ix,iy);
@@ -750,6 +747,9 @@ struct CaarFunctorImpl {
           const Real *const grad_phinh_i0 = &buffers_grad_phinh_i(ie,0,ix,iy,0)[0];
           const Real *const grad_phinh_i1 = &buffers_grad_phinh_i(ie,1,ix,iy,0)[0];
           const Real *const dpnh_dp_i = &buffers_dpnh_dp_i(ie,ix,iy,0)[0];
+          const Real *const exner = &buffers_exner(ie,ix,iy,0)[0];
+          const Real *const vtheta_dp0 = &state_vtheta_dp(ie,data_n0,ix,iy,0)[0];
+          const Real *const dp3d0 = &state_dp3d(ie,data_n0,ix,iy,0)[0];
 
           Real *const v_tens0 = &buffers_v_tens(ie,0,ix,iy,0)[0];
           Real *const v_tens1 = &buffers_v_tens(ie,1,ix,iy,0)[0];
@@ -763,13 +763,61 @@ struct CaarFunctorImpl {
             Kokkos::ThreadVectorRange(team, NUM_LEV),
             [&](const int iz) {
 
-              ttmp1[tr] = 0.25 * (w_i0[iz] * w_i0[iz] + w_i0[iz+1] * w_i0[iz+1]);
+              const Real exneriz = exner[iz];
+              ttmp0[tr] = exneriz;
+              if (pgrad_correction) ttmp1[tr] = log(exneriz);
+
               Real vt0 = 0.5 * (grad_phinh_i0[iz] * dpnh_dp_i[iz] + grad_phinh_i0[iz+1] * dpnh_dp_i[iz+1]);
               Real vt1 = 0.5 * (grad_phinh_i1[iz] * dpnh_dp_i[iz] + grad_phinh_i1[iz+1] * dpnh_dp_i[iz+1]);
 
               team.team_barrier();
 
-              Real t0, t1;
+              Real s0 = 0;
+              Real s1 = 0;
+              Real t0 = 0;
+              Real t1 = 0;
+#pragma nounroll
+              for (int j = 0; j < NP; j++) {
+                s0 += dvv[iy * NP + j] * ttmp0[ix * NP + j];
+                s1 += dvv[ix * NP + j] * ttmp0[j * NP + iy];
+                if (pgrad_correction) {
+                  t0 += dvv[iy * NP + j] * ttmp1[ix * NP + j];
+                  t1 += dvv[ix * NP + j] * ttmp1[j * NP + iy];
+                }
+              }
+              s0 *= sphere_scale_factor_inv;
+              s1 *= sphere_scale_factor_inv;
+              const Real grad_exner0 = dinv00 * s0 + dinv01 * s1;
+              const Real grad_exner1 = dinv10 * s0 + dinv11 * s1;
+
+              const double vtheta = vtheta_dp0[iz] / dp3d0[iz];
+              const double cp_vtheta = PhysicalConstants::cp * vtheta;
+              vt0 += cp_vtheta * grad_exner0;
+              vt1 += cp_vtheta * grad_exner1;
+
+              if (pgrad_correction) {
+                namespace PC = PhysicalConstants;
+                constexpr Real cpt0 = PC::cp * (PC::Tref - PC::Tref_lapse_rate * PC::Tref * PC::cp / PC::g);
+
+                t0 *= sphere_scale_factor_inv;
+                t1 *= sphere_scale_factor_inv;
+                const Real grad_lexner0 = dinv00 * t0 + dinv01 * t1;
+                const Real grad_lexner1 = dinv10 * t0 + dinv11 * t1;
+                const Real exner_inv = 1.0 / exneriz;
+
+                vt0 += cpt0 * (grad_lexner0 - grad_exner0 * exner_inv);
+                vt1 += cpt0 * (grad_lexner1 - grad_exner1 * exner_inv);
+
+                team.team_barrier();
+              }
+
+              vt0 -= 0.5 * (v_i0[iz] * w_i0[iz] + v_i0[iz+1] * w_i0[iz+1]);
+              vt1 -= 0.5 * (v_i1[iz] * w_i0[iz] + v_i1[iz+1] * w_i0[iz+1]);
+
+              ttmp1[tr] = 0.25 * (w_i0[iz] * w_i0[iz] + w_i0[iz+1] * w_i0[iz+1]);
+
+              team.team_barrier();
+
               t0 = t1 = 0;
 #pragma nounroll
               for (int j = 0; j < NP; j++) {
@@ -782,17 +830,12 @@ struct CaarFunctorImpl {
               vt0 += dinv00 * t0 + dinv01 * t1;
               vt1 += dinv10 * t0 + dinv11 * t1;
 
-              vt0 -= 0.5 * (v_i0[iz] * w_i0[iz] + v_i0[iz+1] * w_i0[iz+1]);
-              vt1 -= 0.5 * (v_i1[iz] * w_i0[iz] + v_i1[iz+1] * w_i0[iz+1]);
-
               team.team_barrier();
 
               v_i0[iz] = vt0;
               v_i1[iz] = vt1;
             });
 
-          const Real *const exner = &buffers_exner(ie,ix,iy,0)[0];
-          const Real *const vtheta_dp0 = &state_vtheta_dp(ie,data_n0,ix,iy,0)[0];
 
           const Real *const d = &sphere_d(ie,0,0,ix,iy);
           const Real d00 = d[0];
@@ -806,26 +849,6 @@ struct CaarFunctorImpl {
           Kokkos::parallel_for(
             Kokkos::ThreadVectorRange(team, NUM_LEV),
             [&](const int iz) {
-
-              ttmp0[tr] = exner[iz];
-
-              team.team_barrier();
-              Real t0 = 0;
-              Real t1 = 0;
-#pragma nounroll
-              for (int j = 0; j < NP; j++) {
-                t0 += dvv[iy * NP + j] * ttmp0[ix * NP + j];
-                t1 += dvv[ix * NP + j] * ttmp0[j * NP + iy];
-              }
-              t0 *= sphere_scale_factor_inv;
-              t1 *= sphere_scale_factor_inv;
-              const Real grad_tmp0 = dinv00 * t0 + dinv01 * t1;
-              const Real grad_tmp1 = dinv10 * t0 + dinv11 * t1;
-
-              const double vtheta = vtheta_dp0[iz] / dp3d0[iz];
-              const double cp_vtheta = PhysicalConstants::cp * vtheta;
-              Real vt0 = v_i0[iz] + cp_vtheta * grad_tmp0;
-              Real vt1 = v_i1[iz] + cp_vtheta * grad_tmp1;
 
               team.team_barrier();
 
@@ -843,8 +866,9 @@ struct CaarFunctorImpl {
                 dvmdu += dvv[iy * NP + j] * ttmp1[ix * NP + j] - dvv[ix * NP + j] * ttmp0[j * NP + iy];
               }
               const Real vort = dvmdu * rrdmd + fcor;
-              vt0 -= v1 * vort;
-              vt1 += v0 * vort;
+
+              Real vt0 = v_i0[iz] - v1 * vort;
+              Real vt1 = v_i1[iz] + v0 * vort;
 
               team.team_barrier();
 
@@ -870,7 +894,7 @@ struct CaarFunctorImpl {
             });
         });
 
-      // np1
+          // np1
       Kokkos::parallel_for(
         "caar compute np1",
         TeamPolicy(m_num_elems * NPNP, NUM_LEV),
@@ -920,14 +944,8 @@ struct CaarFunctorImpl {
           Real *const v1_np1 = &state_v(ie,data_np1,1,ix,iy,0)[0];
           v1_np1[iz] = v1_nm1[iz] * scale3_spheremp - v_tens1[iz] * scale1_dt_spheremp;
         });
-#else
-      exit(1);
-#endif
 
     } else {
-
-      //printf("TREY wrong turn\n");
-      //exit(1);
 
       Kokkos::parallel_reduce("caar loop pre-boundary exchange", m_policy_pre, *this, nerr);
 
@@ -936,124 +954,124 @@ struct CaarFunctorImpl {
     GPTLstop("caar compute");
 
 #if 0
-    int rank = MPI_PROC_NULL;
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    if (rank == 0) {
+      int rank = MPI_PROC_NULL;
+      MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+      if (rank == 0) {
 
-      static_assert(VECTOR_SIZE == 1, "VECTOR_SIZE != 1");
-      constexpr int NPNP = NP * NP;
-      constexpr int WARP_SIZE = warpSize;
+        static_assert(VECTOR_SIZE == 1, "VECTOR_SIZE != 1");
+        constexpr int NPNP = NP * NP;
+        constexpr int WARP_SIZE = warpSize;
 
-      using TeamPolicy = Kokkos::TeamPolicy<ExecSpace>;
-      using Team = TeamPolicy::member_type;
+        using TeamPolicy = Kokkos::TeamPolicy<ExecSpace>;
+        using Team = TeamPolicy::member_type;
 
-      auto &data = m_data;
-      auto &derived = m_derived;
-      auto &state = m_state;
+        auto &data = m_data;
+        auto &derived = m_derived;
+        auto &state = m_state;
 
-      Kokkos::parallel_for(
-        "caar loop pre-boundary exchange lambda",
-        TeamPolicy(m_num_elems, NPNP, WARP_SIZE),
-        KOKKOS_LAMBDA(const Team &team) {
+        Kokkos::parallel_for(
+          "caar loop pre-boundary exchange lambda",
+          TeamPolicy(m_num_elems, NPNP, WARP_SIZE),
+          KOKKOS_LAMBDA(const Team &team) {
 
-          const int ie = team.league_rank();
+            const int ie = team.league_rank();
 
-          Kokkos::parallel_for(
-            Kokkos::TeamThreadRange(team,NP*NP),
-            [&](const int idx) {
-              const int igp = idx / NP;
-              const int jgp = idx % NP;
-              Kokkos::parallel_for(
-                Kokkos::ThreadVectorRange(team,NUM_LEV),
-                [&](const int ilev) {
-                  printf("TREY %d %d %d %d %d do %g dv %g %g dp %g\n",
-                         data.np1,ie,igp,jgp,ilev,
-                         derived.m_omega_p(ie,igp,jgp,ilev)[0],
-                         derived.m_vn0(ie,0,igp,jgp,ilev)[0],
-                         derived.m_vn0(ie,1,igp,jgp,ilev)[0],
-                         state.m_dp3d(ie,data.np1,igp,jgp,ilev)[0]);
-                  printf("TREY %d %d %d %d %d wi %g ph %g vt %g v %g %g\n",
-                         data.np1,ie,igp,jgp,ilev,
-                         state.m_w_i(ie,data.np1,igp,jgp,ilev)[0],
-                         state.m_phinh_i(ie,data.np1,igp,jgp,ilev)[0],
-                         state.m_vtheta_dp(ie,data.np1,igp,jgp,ilev)[0],
-                         state.m_v(ie,data.np1,0,igp,jgp,ilev)[0],
-                         state.m_v(ie,data.np1,1,igp,jgp,ilev)[0]);
-                });
-            });
-        });
-      Kokkos::fence();
-    }
-    if (m_data.n0 == 2) {
-      if (rank == 0) printf("TREY %s %s\n",__DATE__,__TIME__);
-      fflush(stdout);
-      MPI_Barrier(MPI_COMM_WORLD);
-      MPI_Abort(MPI_COMM_WORLD,0);
-    }
+            Kokkos::parallel_for(
+              Kokkos::TeamThreadRange(team,NP*NP),
+              [&](const int idx) {
+                const int igp = idx / NP;
+                const int jgp = idx % NP;
+                Kokkos::parallel_for(
+                  Kokkos::ThreadVectorRange(team,NUM_LEV),
+                  [&](const int ilev) {
+                    printf("TREY %d %d %d %d %d do %g dv %g %g dp %g\n",
+                           data.np1,ie,igp,jgp,ilev,
+                           derived.m_omega_p(ie,igp,jgp,ilev)[0],
+                           derived.m_vn0(ie,0,igp,jgp,ilev)[0],
+                           derived.m_vn0(ie,1,igp,jgp,ilev)[0],
+                           state.m_dp3d(ie,data.np1,igp,jgp,ilev)[0]);
+                    printf("TREY %d %d %d %d %d wi %g ph %g vt %g v %g %g\n",
+                           data.np1,ie,igp,jgp,ilev,
+                           state.m_w_i(ie,data.np1,igp,jgp,ilev)[0],
+                           state.m_phinh_i(ie,data.np1,igp,jgp,ilev)[0],
+                           state.m_vtheta_dp(ie,data.np1,igp,jgp,ilev)[0],
+                           state.m_v(ie,data.np1,0,igp,jgp,ilev)[0],
+                           state.m_v(ie,data.np1,1,igp,jgp,ilev)[0]);
+                  });
+              });
+          });
+        Kokkos::fence();
+      }
+      if (m_data.n0 == 2) {
+        if (rank == 0) printf("TREY %s %s\n",__DATE__,__TIME__);
+        fflush(stdout);
+        MPI_Barrier(MPI_COMM_WORLD);
+        MPI_Abort(MPI_COMM_WORLD,0);
+      }
 #endif
 
-    if (nerr > 0)
-      check_print_abort_on_bad_elems("CaarFunctorImpl::run TagPreExchange", data.n0);
+      if (nerr > 0)
+        check_print_abort_on_bad_elems("CaarFunctorImpl::run TagPreExchange", data.n0);
 
-    GPTLstart("caar_bexchV");
-    m_bes[data.np1]->exchange(m_geometry.m_rspheremp);
-    Kokkos::fence();
-    GPTLstop("caar_bexchV");
-
-    if (!m_theta_hydrostatic_mode) {
-      GPTLstart("caar compute");
-      Kokkos::parallel_for("caar loop post-boundary exchange", m_policy_post, *this);
+      GPTLstart("caar_bexchV");
+      m_bes[data.np1]->exchange(m_geometry.m_rspheremp);
       Kokkos::fence();
-      GPTLstop("caar compute");
+      GPTLstop("caar_bexchV");
+
+      if (!m_theta_hydrostatic_mode) {
+        GPTLstart("caar compute");
+        Kokkos::parallel_for("caar loop post-boundary exchange", m_policy_post, *this);
+        Kokkos::fence();
+        GPTLstop("caar compute");
+      }
+
+      limiter.run(data.np1);
+
+      profiling_pause();
     }
 
-    limiter.run(data.np1);
+    KOKKOS_INLINE_FUNCTION
+      void operator()(const TagPreExchange&, const TeamMember &team, int& nerr) const {
+        // In this body, we use '====' to separate sync epochs (delimited by barriers)
+        // Note: make sure the same temp is not used within each epoch!
 
-    profiling_pause();
-  }
+        KernelVariables kv(team, m_tu);
 
-  KOKKOS_INLINE_FUNCTION
-  void operator()(const TagPreExchange&, const TeamMember &team, int& nerr) const {
-    // In this body, we use '====' to separate sync epochs (delimited by barriers)
-    // Note: make sure the same temp is not used within each epoch!
+        // =========== EPOCH 1 =========== //
+        compute_div_vdp(kv);
 
-    KernelVariables kv(team, m_tu);
+        // =========== EPOCH 2 =========== //
+        kv.team_barrier();
 
-    // =========== EPOCH 1 =========== //
-    compute_div_vdp(kv);
+        // Computes pi, omega, and phi.
+        const bool ok = compute_scan_quantities(kv);
+        if ( ! ok) nerr = 1;
 
-    // =========== EPOCH 2 =========== //
-    kv.team_barrier();
+        if (m_rsplit==0 || !m_theta_hydrostatic_mode) {
+          // ============ EPOCH 2.1 =========== //
+          kv.team_barrier();
+          compute_interface_quantities(kv);
+        }
 
-    // Computes pi, omega, and phi.
-    const bool ok = compute_scan_quantities(kv);
-    if ( ! ok) nerr = 1;
+        if (m_rsplit==0) {
+          // ============= EPOCH 2.2 ============ //
+          kv.team_barrier();
+          compute_vertical_advection(kv);
+        }
 
-    if (m_rsplit==0 || !m_theta_hydrostatic_mode) {
-      // ============ EPOCH 2.1 =========== //
-      kv.team_barrier();
-      compute_interface_quantities(kv);
-    }
+        // ============= EPOCH 3 ============== //
+        kv.team_barrier();
+        compute_accumulated_quantities(kv);
 
-    if (m_rsplit==0) {
-      // ============= EPOCH 2.2 ============ //
-      kv.team_barrier();
-      compute_vertical_advection(kv);
-    }
+        // Compute update quantities
+        if (!m_theta_hydrostatic_mode) {
+          compute_w_and_phi_tens (kv);
+        }
 
-    // ============= EPOCH 3 ============== //
-    kv.team_barrier();
-    compute_accumulated_quantities(kv);
+        compute_dp_and_theta_tens (kv);
 
-    // Compute update quantities
-    if (!m_theta_hydrostatic_mode) {
-      compute_w_and_phi_tens (kv);
-    }
-
-    compute_dp_and_theta_tens (kv);
-
-    // ============= EPOCH 4 =========== //
-    // compute_v_tens reuses some buffers used by compute_dp_and_theta_tens 
+        // ============= EPOCH 4 =========== //
+        // compute_v_tens reuses some buffers used by compute_dp_and_theta_tens 
     kv.team_barrier();
     compute_v_tens (kv);
 
