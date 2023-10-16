@@ -421,7 +421,7 @@ struct CaarFunctorImpl {
           const int ix = tr / NP;
           const int iy = tr % NP;
 
-          const Scalar *const dp3d0 = &state_dp3d(ie,data_n0,ix,iy,0);
+          //const Scalar *const dp3d0 = &state_dp3d(ie,data_n0,ix,iy,0);
 
           Scalar *const ptmp0 = reinterpret_cast<Scalar *>(team.team_shmem().get_shmem(REAL_PER_POINT));
           Scalar *const pi_i = ptmp0 + tr * NUM_LEV_P;
@@ -429,7 +429,7 @@ struct CaarFunctorImpl {
             Kokkos::ThreadVectorRange(team, NUM_LEV),
             [&](const int iz, Scalar &sum, const bool last) {
               if (iz == 0) pi_i[0] = sum = pi_i00;
-              sum += dp3d0[iz];
+              sum += state_dp3d(ie,data_n0,ix,iy,iz);
               if (last) pi_i[iz+1] = sum;
             });
 
@@ -449,14 +449,14 @@ struct CaarFunctorImpl {
           Scalar *const dvv = reinterpret_cast<Scalar *>(team.team_shmem().get_shmem(REAL_PER_NPNP));
           if (dz == 0) dvv[tr] = sphere_dvv(ix,iy);
 
-          Scalar *const dvn00 = &derived_vn0(ie,0,ix,iy,0);
-          Scalar *const dvn01 = &derived_vn0(ie,1,ix,iy,0);
-          Scalar *const dp_tens = &buffers_dp_tens(ie,ix,iy,0);
-          Scalar *const theta_tens = &buffers_theta_tens(ie,ix,iy,0);
+          // Scalar *const dvn00 = &derived_vn0(ie,0,ix,iy,0);
+          // Scalar *const dvn01 = &derived_vn0(ie,1,ix,iy,0);
+          // Scalar *const dp_tens = &buffers_dp_tens(ie,ix,iy,0);
+          // Scalar *const theta_tens = &buffers_theta_tens(ie,ix,iy,0);
 
-          const Scalar *const v00 = &state_v(ie,data_n0,0,ix,iy,0);
-          const Scalar *const v01 = &state_v(ie,data_n0,1,ix,iy,0);
-          const Scalar *const vtheta_dp0 = &state_vtheta_dp(ie,data_n0,ix,iy,0);
+          // const Scalar *const v00 = &state_v(ie,data_n0,0,ix,iy,0);
+          // const Scalar *const v01 = &state_v(ie,data_n0,1,ix,iy,0);
+          // const Scalar *const vtheta_dp0 = &state_vtheta_dp(ie,data_n0,ix,iy,0);
 
           const Scalar dinv00 = sphere_dinv(ie,0,0,ix,iy);
           const Scalar dinv01 = sphere_dinv(ie,0,1,ix,iy);
@@ -470,12 +470,12 @@ struct CaarFunctorImpl {
             Kokkos::ThreadVectorRange(team, NUM_LEV),
             [&](const int iz) {
 
-              const Scalar dp3d = dp3d0[iz];
-              const Scalar v0 = v00[iz] * dp3d;
-              const Scalar v1 = v01[iz] * dp3d;
+              const Scalar dp3d = state_dp3d(ie,data_n0,ix,iy,iz);
+              const Scalar v0 = state_v(ie,data_n0,0,ix,iy,iz) * dp3d;
+              const Scalar v1 = state_v(ie,data_n0,1,ix,iy,iz) * dp3d;
 
-              dvn00[iz] += data_eta_ave_w * v0;
-              dvn01[iz] += data_eta_ave_w * v1;
+              derived_vn0(ie,0,ix,iy,iz) += data_eta_ave_w * v0;
+              derived_vn0(ie,1,ix,iy,iz) += data_eta_ave_w * v1;
 
               team.team_barrier();
 
@@ -493,7 +493,7 @@ struct CaarFunctorImpl {
 
               team.team_barrier();
 
-              const Scalar vtheta = vtheta_dp0[iz] / dp3d;
+              const Scalar vtheta = state_vtheta_dp(ie,data_n0,ix,iy,iz) / dp3d;
               ttmp0[tr] = vtheta;
 
               team.team_barrier();
@@ -512,9 +512,9 @@ struct CaarFunctorImpl {
 
               Scalar tt = dvdp * ttmp0[tr];
               tt += grad_tmp0 * v0 + grad_tmp1 * v1;
-              theta_tens[iz] = tt;
+              buffers_theta_tens(ie,ix,iy,iz) = tt;
 
-              dp_tens[iz] = dvdp;
+              buffers_dp_tens(ie,ix,iy,iz) = dvdp;
             });
 
           Scalar *const ptmp1 = reinterpret_cast<Scalar *>(team.team_shmem().get_shmem(REAL_PER_POINT));
@@ -523,15 +523,15 @@ struct CaarFunctorImpl {
             Kokkos::ThreadVectorRange(team, NUM_LEV),
             [&](const int iz, Scalar &sum, const bool last) {
               if (iz == 0) omega_i[0] = sum = 0;
-              sum += dp_tens[iz];
+              sum += buffers_dp_tens(ie,ix,iy,iz);
               if (last) omega_i[iz+1] = sum;
             });
 
-          const Scalar *const phinh_i0 = &state_phinh_i(ie,data_n0,ix,iy,0);
+          // const Scalar *const phinh_i0 = &state_phinh_i(ie,data_n0,ix,iy,0);
 
-          Scalar *const domega_p = &derived_omega_p(ie,ix,iy,0);
-          Scalar *const exner = &buffers_exner(ie,ix,iy,0);
-          Scalar *const pnh = &buffers_pnh(ie,ix,iy,0);
+          // Scalar *const domega_p = &derived_omega_p(ie,ix,iy,0);
+          // Scalar *const exner = &buffers_exner(ie,ix,iy,0);
+          // Scalar *const pnh = &buffers_pnh(ie,ix,iy,0);
 
           Kokkos::parallel_for(
             Kokkos::ThreadVectorRange(team, NUM_LEV),
@@ -554,21 +554,21 @@ struct CaarFunctorImpl {
               const Scalar grad_tmp0 = dinv00 * d0 + dinv01 * d1;
               const Scalar grad_tmp1 = dinv10 * d0 + dinv11 * d1;
 
-              Scalar omega_p = v00[iz] * grad_tmp0 + v01[iz] * grad_tmp1;
+              Scalar omega_p = state_v(ie,data_n0,0,ix,iy,iz) * grad_tmp0 + state_v(ie,data_n0,1,ix,iy,iz) * grad_tmp1;
               omega_p -= 0.5 * (omega_i[iz] + omega_i[iz+1]);
-              domega_p[iz] += data_eta_ave_w * omega_p;
+              derived_omega_p(ie,ix,iy,iz) += data_eta_ave_w * omega_p;
 
-              const Scalar dphi = phinh_i0[iz+1] - phinh_i0[iz];
-              if ((vtheta_dp0[iz][0] < 0) || (dphi[0] > 0)) abort();
+              const Scalar dphi = state_phinh_i(ie,data_n0,ix,iy,iz+1) - state_phinh_i(ie,data_n0,ix,iy,iz);
+              if ((state_vtheta_dp(ie,data_n0,ix,iy,iz)[0] < 0) || (dphi[0] > 0)) abort();
 
-              Scalar exneriz = -PhysicalConstants::Rgas * vtheta_dp0[iz] / dphi;
+              Scalar exneriz = -PhysicalConstants::Rgas * state_vtheta_dp(ie,data_n0,ix,iy,iz) / dphi;
               Scalar pnhiz = exneriz * divp0;
               pnhiz = pow(pnhiz, div1mkappa);
               pnhiz *= PhysicalConstants::p0;
               exneriz = pnhiz / exneriz;
 
-              pnh[iz] = pnhiz;
-              exner[iz] = exneriz;
+              buffers_pnh(ie,ix,iy,iz) = pnhiz;
+              buffers_exner(ie,ix,iy,iz) = exneriz;
             });
         });
 
