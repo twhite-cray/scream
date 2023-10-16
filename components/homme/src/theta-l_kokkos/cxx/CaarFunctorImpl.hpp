@@ -123,6 +123,18 @@ struct CaarFunctorImpl {
 
   Kokkos::Array<std::shared_ptr<BoundaryExchange>, NUM_TIME_LEVELS> m_bes;
 
+  using ScalarPerThread = Kokkos::View<
+    Scalar[warpSize][NP][NP],
+    Kokkos::DefaultExecutionSpace::scratch_memory_space,
+    Kokkos::MemoryTraits<Kokkos::Unmanaged>
+      >;
+
+  using ScalarPerPoint = Kokkos::View<
+    Scalar[NP][NP][NUM_LEV_P],
+    Kokkos::DefaultExecutionSpace::scratch_memory_space,
+    Kokkos::MemoryTraits<Kokkos::Unmanaged>
+      >;
+
   CaarFunctorImpl(const Elements &elements, const Tracers &/* tracers */,
                   const ReferenceElement &ref_FE, const HybridVCoord &hvcoord,
                   const SphereOperators &sphere_ops, const SimulationParams& params)
@@ -413,7 +425,7 @@ struct CaarFunctorImpl {
       Kokkos::parallel_for(
         "caar compute div_vdp scan_quantities dp_and_theta_tens",
         TeamPolicy(m_num_elems, NPNP, WARP_SIZE).
-        set_scratch_size(0, Kokkos::PerTeam(REAL_PER_NPNP + 2 * REAL_PER_THREAD + 2 * REAL_PER_POINT)),
+        set_scratch_size(0, Kokkos::PerTeam(2 * ScalarPerThread::shmem_size() + 2 * ScalarPerPoint::shmem_size())),
         KOKKOS_LAMBDA(const Team &team) {
 
           const int ie = team.league_rank();
@@ -421,8 +433,11 @@ struct CaarFunctorImpl {
           const int ix = tr / NP;
           const int iy = tr % NP;
 
-          Scalar *const ptmp0 = reinterpret_cast<Scalar *>(team.team_shmem().get_shmem(REAL_PER_POINT));
-          Scalar *const pi_i = ptmp0 + tr * NUM_LEV_P;
+          // Scalar *const ptmp0 = reinterpret_cast<Scalar *>(team.team_shmem().get_shmem(REAL_PER_POINT));
+          // Scalar *const pi_i = ptmp0 + tr * NUM_LEV_P;
+          ScalarPerPoint ptmp0(team.team_scratch(0));
+          auto pi_i = Kokkos::subview(ptmp0,ix,iy,Kokkos::ALL);
+
           Kokkos::parallel_scan(
             Kokkos::ThreadVectorRange(team, NUM_LEV),
             [&](const int iz, Scalar &sum, const bool last) {
@@ -438,11 +453,15 @@ struct CaarFunctorImpl {
               dz = k;
             });
 
-          Scalar *const ttmp00 = reinterpret_cast<Scalar *>(team.team_shmem().get_shmem(REAL_PER_THREAD));
-          Scalar *const ttmp0 = ttmp00 + dz * NPNP;
+          // Scalar *const ttmp00 = reinterpret_cast<Scalar *>(team.team_shmem().get_shmem(REAL_PER_THREAD));
+          // Scalar *const ttmp0 = ttmp00 + dz * NPNP;
+          ScalarPerThread ttmp00(team.team_scratch(0));
+          auto ttmp0 = Kokkos::subview(ttmp00,dz,Kokkos::ALL,Kokkos::ALL);
 
-          Scalar *const ttmp10 = reinterpret_cast<Scalar *>(team.team_shmem().get_shmem(REAL_PER_THREAD));
-          Scalar *const ttmp1 = ttmp10 + dz * NPNP;
+          // Scalar *const ttmp10 = reinterpret_cast<Scalar *>(team.team_shmem().get_shmem(REAL_PER_THREAD));
+          // Scalar *const ttmp1 = ttmp10 + dz * NPNP;
+          ScalarPerThread ttmp10(team.team_scratch(0));
+          auto ttmp1 = Kokkos::subview(ttmp10,dz,Kokkos::ALL,Kokkos::ALL);
 
           const Scalar dinv00 = sphere_dinv(ie,0,0,ix,iy);
           const Scalar dinv01 = sphere_dinv(ie,0,1,ix,iy);
@@ -465,22 +484,22 @@ struct CaarFunctorImpl {
 
               team.team_barrier();
 
-              ttmp0[tr] = (dinv00 * v0 + dinv10 * v1) * metdet;
-              ttmp1[tr] = (dinv01 * v0 + dinv11 * v1) * metdet;
+              ttmp0(ix,iy) = (dinv00 * v0 + dinv10 * v1) * metdet;
+              ttmp1(ix,iy) = (dinv01 * v0 + dinv11 * v1) * metdet;
 
               team.team_barrier();
 
               Scalar duv = 0;
 #pragma nounroll
               for (int j = 0; j < NP; j++) {
-                duv += sphere_dvv(iy,j) * ttmp0[ix * NP + j] + sphere_dvv(ix,j) * ttmp1[j * NP + iy];
+                duv += sphere_dvv(iy,j) * ttmp0(ix,j) + sphere_dvv(ix,j) * ttmp1(j,iy);
               }
               const Scalar dvdp = duv * rrdmd;
 
               team.team_barrier();
 
               const Scalar vtheta = state_vtheta_dp(ie,data_n0,ix,iy,iz) / dp3d;
-              ttmp0[tr] = vtheta;
+              ttmp0(ix,iy) = vtheta;
 
               team.team_barrier();
 
@@ -488,23 +507,26 @@ struct CaarFunctorImpl {
               Scalar t1 = 0;
 #pragma nounroll
               for (int j = 0; j < NP; j++) {
-                t0 += sphere_dvv(iy,j) * ttmp0[ix * NP + j];
-                t1 += sphere_dvv(ix,j) * ttmp0[j * NP + iy];
+                t0 += sphere_dvv(iy,j) * ttmp0(ix,j);
+                t1 += sphere_dvv(ix,j) * ttmp0(j,iy);
               }
               t0 *= sphere_scale_factor_inv;
               t1 *= sphere_scale_factor_inv;
               const Scalar grad_tmp0 = dinv00 * t0 + dinv01 * t1;
               const Scalar grad_tmp1 = dinv10 * t0 + dinv11 * t1;
 
-              Scalar tt = dvdp * ttmp0[tr];
+              Scalar tt = dvdp * ttmp0(ix,iy);
               tt += grad_tmp0 * v0 + grad_tmp1 * v1;
               buffers_theta_tens(ie,ix,iy,iz) = tt;
 
               buffers_dp_tens(ie,ix,iy,iz) = dvdp;
             });
 
-          Scalar *const ptmp1 = reinterpret_cast<Scalar *>(team.team_shmem().get_shmem(REAL_PER_POINT));
-          Scalar *const omega_i = ptmp1 + tr * NUM_LEV_P;
+          // Scalar *const ptmp1 = reinterpret_cast<Scalar *>(team.team_shmem().get_shmem(REAL_PER_POINT));
+          // Scalar *const omega_i = ptmp1 + tr * NUM_LEV_P;
+          ScalarPerPoint ptmp1(team.team_scratch(0));
+          auto omega_i = Kokkos::subview(ptmp1,ix,iy,Kokkos::ALL);
+
           Kokkos::parallel_scan(
             Kokkos::ThreadVectorRange(team, NUM_LEV),
             [&](const int iz, Scalar &sum, const bool last) {
@@ -518,7 +540,7 @@ struct CaarFunctorImpl {
             [&](const int iz) {
               team.team_barrier();
 
-              ttmp0[tr] = 0.5 * (pi_i[iz] + pi_i[iz+1]);
+              ttmp0(ix,iy) = 0.5 * (pi_i[iz] + pi_i[iz+1]);
 
               team.team_barrier();
 
@@ -526,8 +548,8 @@ struct CaarFunctorImpl {
               Scalar d1 = 0;
 #pragma nounroll
               for (int j = 0; j < NP; j++) {
-                d0 += sphere_dvv(iy,j) * ttmp0[ix * NP + j];
-                d1 += sphere_dvv(ix,j) * ttmp0[j * NP + iy];
+                d0 += sphere_dvv(iy,j) * ttmp0(ix,j);
+                d1 += sphere_dvv(ix,j) * ttmp0(j,iy);
               }
               d0 *= sphere_scale_factor_inv;
               d1 *= sphere_scale_factor_inv;
