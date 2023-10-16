@@ -123,15 +123,18 @@ struct CaarFunctorImpl {
 
   Kokkos::Array<std::shared_ptr<BoundaryExchange>, NUM_TIME_LEVELS> m_bes;
 
+  static constexpr int NPNP = NP * NP;
+  static constexpr int WARP_SIZE = warpSize;
+
   using ScalarPerThread = Kokkos::View<
-    Scalar[warpSize][NP][NP],
-    Kokkos::DefaultExecutionSpace::scratch_memory_space,
+    Scalar[WARP_SIZE][NP][NP],
+    ExecSpace::scratch_memory_space,
     Kokkos::MemoryTraits<Kokkos::Unmanaged>
       >;
 
   using ScalarPerPoint = Kokkos::View<
     Scalar[NP][NP][NUM_LEV_P],
-    Kokkos::DefaultExecutionSpace::scratch_memory_space,
+    ExecSpace::scratch_memory_space,
     Kokkos::MemoryTraits<Kokkos::Unmanaged>
       >;
 
@@ -363,11 +366,6 @@ struct CaarFunctorImpl {
     if ((true) && (m_rsplit > 0) && (!m_theta_hydrostatic_mode) && (m_theta_advection_form == AdvectionForm::NonConservative)) {
 
       static_assert(VECTOR_SIZE == 1, "VECTOR_SIZE != 1");
-      constexpr int NPNP = NP * NP;
-      constexpr int WARP_SIZE = warpSize;
-      // constexpr int REAL_PER_NPNP = NPNP * sizeof(Real);
-      // constexpr int REAL_PER_THREAD = REAL_PER_NPNP * WARP_SIZE;
-      // constexpr int REAL_PER_POINT = REAL_PER_NPNP * NUM_LEV_P;
 
       using TeamPolicy = Kokkos::TeamPolicy<ExecSpace>;
       using Team = TeamPolicy::member_type;
@@ -433,8 +431,6 @@ struct CaarFunctorImpl {
           const int ix = tr / NP;
           const int iy = tr % NP;
 
-          // Scalar *const ptmp0 = reinterpret_cast<Scalar *>(team.team_shmem().get_shmem(REAL_PER_POINT));
-          // Scalar *const pi_i = ptmp0 + tr * NUM_LEV_P;
           ScalarPerPoint ptmp0(team.team_scratch(0));
           auto pi_i = Kokkos::subview(ptmp0,ix,iy,Kokkos::ALL);
 
@@ -453,13 +449,9 @@ struct CaarFunctorImpl {
               dz = k;
             });
 
-          // Scalar *const ttmp00 = reinterpret_cast<Scalar *>(team.team_shmem().get_shmem(REAL_PER_THREAD));
-          // Scalar *const ttmp0 = ttmp00 + dz * NPNP;
           ScalarPerThread ttmp00(team.team_scratch(0));
           auto ttmp0 = Kokkos::subview(ttmp00,dz,Kokkos::ALL,Kokkos::ALL);
 
-          // Scalar *const ttmp10 = reinterpret_cast<Scalar *>(team.team_shmem().get_shmem(REAL_PER_THREAD));
-          // Scalar *const ttmp1 = ttmp10 + dz * NPNP;
           ScalarPerThread ttmp10(team.team_scratch(0));
           auto ttmp1 = Kokkos::subview(ttmp10,dz,Kokkos::ALL,Kokkos::ALL);
 
@@ -522,8 +514,6 @@ struct CaarFunctorImpl {
               buffers_dp_tens(ie,ix,iy,iz) = dvdp;
             });
 
-          // Scalar *const ptmp1 = reinterpret_cast<Scalar *>(team.team_shmem().get_shmem(REAL_PER_POINT));
-          // Scalar *const omega_i = ptmp1 + tr * NUM_LEV_P;
           ScalarPerPoint ptmp1(team.team_scratch(0));
           auto omega_i = Kokkos::subview(ptmp1,ix,iy,Kokkos::ALL);
 
@@ -679,13 +669,9 @@ struct CaarFunctorImpl {
               dz = k;
             });
 
-          // Scalar *const ptmp0 = reinterpret_cast<Scalar *>(team.team_shmem().get_shmem(REAL_PER_POINT));
-          // Scalar *const v_i0 = ptmp0 + tr * NUM_LEV_P;
           ScalarPerPoint ptmp0(team.team_scratch(0));
           auto v_i0 = Kokkos::subview(ptmp0,ix,iy,Kokkos::ALL);
 
-          // Scalar *const ptmp1 = reinterpret_cast<Scalar *>(team.team_shmem().get_shmem(REAL_PER_POINT));
-          // Scalar *const v_i1 = ptmp1 + tr * NUM_LEV_P;
           ScalarPerPoint ptmp1(team.team_scratch(0));
           auto v_i1 = Kokkos::subview(ptmp1,ix,iy,Kokkos::ALL);
 
@@ -710,8 +696,6 @@ struct CaarFunctorImpl {
               v_i1[iz] = dinv10 * w0 + dinv11 * w1;
             });
 
-          // Scalar *const ttmp10 = reinterpret_cast<Scalar *>(team.team_shmem().get_shmem(REAL_PER_THREAD));
-          // Scalar *const ttmp1 = ttmp10 + dz * NPNP;
           ScalarPerThread ttmp10(team.team_scratch(0));
           auto ttmp1 = Kokkos::subview(ttmp10,dz,Kokkos::ALL,Kokkos::ALL);
 
@@ -748,8 +732,6 @@ struct CaarFunctorImpl {
               v_i1[iz] = vt1;
             });
 
-          // Scalar *const ttmp00 = reinterpret_cast<Scalar *>(team.team_shmem().get_shmem(REAL_PER_THREAD));
-          // Scalar *const ttmp0 = ttmp00 + dz * NPNP;
           ScalarPerThread ttmp00(team.team_scratch(0));
           auto ttmp0 = Kokkos::subview(ttmp00,dz,Kokkos::ALL,Kokkos::ALL);
 
