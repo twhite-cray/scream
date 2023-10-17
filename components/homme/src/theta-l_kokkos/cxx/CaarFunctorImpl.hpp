@@ -460,8 +460,7 @@ struct CaarFunctorImpl {
           const Scalar dinv10 = sphere_dinv(ie,1,0,ix,iy);
           const Scalar dinv11 = sphere_dinv(ie,1,1,ix,iy);
 
-          const Scalar metdet = sphere_metdet(ie,ix,iy);
-          const Scalar rrdmd = (1.0 / metdet) * sphere_scale_factor_inv;
+          const Scalar rrdmd = (1.0 / sphere_metdet(ie,ix,iy)) * sphere_scale_factor_inv;
 
           Kokkos::parallel_for(
             Kokkos::ThreadVectorRange(team, NUM_LEV),
@@ -476,8 +475,8 @@ struct CaarFunctorImpl {
 
               team.team_barrier();
 
-              ttmp0(ix,iy) = (dinv00 * v0 + dinv10 * v1) * metdet;
-              ttmp1(ix,iy) = (dinv01 * v0 + dinv11 * v1) * metdet;
+              ttmp0(ix,iy) = (dinv00 * v0 + dinv10 * v1) * sphere_metdet(ie,ix,iy);
+              ttmp1(ix,iy) = (dinv01 * v0 + dinv11 * v1) * sphere_metdet(ie,ix,iy);
 
               team.team_barrier();
 
@@ -796,8 +795,7 @@ struct CaarFunctorImpl {
           const Scalar d10 = sphere_d(ie,1,0,ix,iy);
           const Scalar d11 = sphere_d(ie,1,1,ix,iy);
           const Scalar fcor = geometry_fcor(ie,ix,iy);
-          const Scalar metdet = sphere_metdet(ie,ix,iy);
-          const Scalar rrdmd = (1.0 / metdet) * sphere_scale_factor_inv;
+          const Scalar rrdmd = (1.0 / sphere_metdet(ie,ix,iy)) * sphere_scale_factor_inv;
 
           Kokkos::parallel_for(
             Kokkos::ThreadVectorRange(team, NUM_LEV),
