@@ -1192,8 +1192,8 @@ struct SphereGlobal {
 
   KOKKOS_INLINE_FUNCTION SphereGlobal(const SphereGlobal &) = default;
 
-  template <typename Team, typename TempXY>
-  KOKKOS_INLINE_FUNCTION Scalar div(const Team &team, TempXY &ttmp0, TempXY &ttmp1, const int ie, const int ix, const int iy, const Scalar v0, const Scalar v1) const {
+  template <typename TeamT, typename TempT>
+  KOKKOS_INLINE_FUNCTION Scalar div(const TeamT &team, TempT &ttmp0, TempT &ttmp1, const int ie, const int ix, const int iy, const Scalar v0, const Scalar v1) const {
 
     team.team_barrier();
 
@@ -1211,8 +1211,8 @@ struct SphereGlobal {
     return (duv * rrdmd);
   }
 
-  template <typename TempXY>
-  KOKKOS_INLINE_FUNCTION void grad(TempXY &ttmp0, const int ie, const int ix, const int iy, Scalar &grad0, Scalar &grad1) const {
+  template <typename TempT>
+  KOKKOS_INLINE_FUNCTION void grad(TempT &ttmp0, const int ie, const int ix, const int iy, Scalar &grad0, Scalar &grad1) const {
 
     Scalar t0 = 0;
     Scalar t1 = 0;
@@ -1220,6 +1220,21 @@ struct SphereGlobal {
     for (int j = 0; j < NP; j++) {
       t0 += m_dvv(iy,j) * ttmp0(ix,j);
       t1 += m_dvv(ix,j) * ttmp0(j,iy);
+    }
+    t0 *= m_scale_factor_inv;
+    t1 *= m_scale_factor_inv;
+    grad0 = m_dinv(ie,0,0,ix,iy) * t0 + m_dinv(ie,0,1,ix,iy) * t1;
+    grad1 = m_dinv(ie,1,0,ix,iy) * t0 + m_dinv(ie,1,1,ix,iy) * t1;
+  }
+
+  template <typename ViewT>
+  KOKKOS_INLINE_FUNCTION void grad(ViewT &v, const int ie, const int in, const int ix, const int iy, const int iz, Scalar &grad0, Scalar &grad1) const {
+
+    Scalar t0 = 0;
+    Scalar t1 = 0;
+    for (int j = 0; j < NP; j++) {
+      t0 += m_dvv(iy,j) * v(ie,in,ix,j,iz);
+      t1 += m_dvv(ix,j) * v(ie,in,j,iy,iz);
     }
     t0 *= m_scale_factor_inv;
     t1 *= m_scale_factor_inv;

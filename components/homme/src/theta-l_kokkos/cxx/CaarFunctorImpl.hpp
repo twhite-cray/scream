@@ -467,22 +467,6 @@ struct CaarFunctorImpl {
               derived_vn0(ie,0,ix,iy,iz) += data_eta_ave_w * v0;
               derived_vn0(ie,1,ix,iy,iz) += data_eta_ave_w * v1;
 
-/*
-              team.team_barrier();
-
-              ttmp0(ix,iy) = (sphere_dinv(ie,0,0,ix,iy) * v0 + sphere_dinv(ie,1,0,ix,iy) * v1) * sphere_metdet(ie,ix,iy);
-              ttmp1(ix,iy) = (sphere_dinv(ie,0,1,ix,iy) * v0 + sphere_dinv(ie,1,1,ix,iy) * v1) * sphere_metdet(ie,ix,iy);
-
-              team.team_barrier();
-
-              Scalar duv = 0;
-#pragma nounroll
-              for (int j = 0; j < NP; j++) {
-                duv += sphere_dvv(iy,j) * ttmp0(ix,j) + sphere_dvv(ix,j) * ttmp1(j,iy);
-              }
-              const Scalar rrdmd = (1.0 / sphere_metdet(ie,ix,iy)) * sphere_scale_factor_inv;
-              const Scalar dvdp = duv * rrdmd;
-*/
               const Scalar dvdp = sphere.div(team, ttmp0, ttmp1, ie, ix, iy, v0, v1);
 
               team.team_barrier();
@@ -492,19 +476,6 @@ struct CaarFunctorImpl {
 
               team.team_barrier();
 
-              /*
-              Scalar t0 = 0;
-              Scalar t1 = 0;
-#pragma nounroll
-              for (int j = 0; j < NP; j++) {
-                t0 += sphere_dvv(iy,j) * ttmp0(ix,j);
-                t1 += sphere_dvv(ix,j) * ttmp0(j,iy);
-              }
-              t0 *= sphere_scale_factor_inv;
-              t1 *= sphere_scale_factor_inv;
-              const Scalar grad_tmp0 = sphere_dinv(ie,0,0,ix,iy) * t0 + sphere_dinv(ie,0,1,ix,iy) * t1;
-              const Scalar grad_tmp1 = sphere_dinv(ie,1,0,ix,iy) * t0 + sphere_dinv(ie,1,1,ix,iy) * t1;
-              */
               Scalar grad_tmp0, grad_tmp1;
               sphere.grad(ttmp0, ie, ix, iy, grad_tmp0, grad_tmp1);
 
@@ -535,20 +506,6 @@ struct CaarFunctorImpl {
 
               team.team_barrier();
 
-              /*
-              Scalar d0 = 0;
-              Scalar d1 = 0;
-#pragma nounroll
-              for (int j = 0; j < NP; j++) {
-                d0 += sphere_dvv(iy,j) * ttmp0(ix,j);
-                d1 += sphere_dvv(ix,j) * ttmp0(j,iy);
-              }
-              d0 *= sphere_scale_factor_inv;
-              d1 *= sphere_scale_factor_inv;
-              const Scalar grad_tmp0 = sphere_dinv(ie,0,0,ix,iy) * d0 + sphere_dinv(ie,0,1,ix,iy) * d1;
-              const Scalar grad_tmp1 = sphere_dinv(ie,1,0,ix,iy) * d0 + sphere_dinv(ie,1,1,ix,iy) * d1;
-              */
-              
               Scalar grad_tmp0, grad_tmp1;
               sphere.grad(ttmp0, ie, ix, iy, grad_tmp0, grad_tmp1);
 
@@ -596,6 +553,7 @@ struct CaarFunctorImpl {
             Kokkos::ThreadVectorRange(team, NUM_LEV_P),
             [&](const int iz) {
 
+              /*
               Scalar p0 = 0;
               Scalar p1 = 0;
               Scalar w0 = 0;
@@ -611,6 +569,7 @@ struct CaarFunctorImpl {
               p1 *= sphere_scale_factor_inv;
               w0 *= sphere_scale_factor_inv;
               w1 *= sphere_scale_factor_inv;
+              */
 
               const Scalar dm = (iz > 0) ? state_dp3d(ie,data_n0,ix,iy,iz-1) : 0;
               const Scalar dz = (iz < NUM_LEV) ? state_dp3d(ie,data_n0,ix,iy,iz) : 0;
@@ -624,8 +583,12 @@ struct CaarFunctorImpl {
               const Scalar v1z = (iz < NUM_LEV) ? state_v(ie,data_n0,1,ix,iy,iz) : 0;
               const Scalar v_i1 = (dz * v1z + dm * v1m) * denom;
 
+              /*
               const Scalar grad_w_i0 = sphere_dinv(ie,0,0,ix,iy) * w0 + sphere_dinv(ie,0,1,ix,iy) * w1;
               const Scalar grad_w_i1 = sphere_dinv(ie,1,0,ix,iy) * w0 + sphere_dinv(ie,1,1,ix,iy) * w1;
+              */
+              Scalar grad_w_i0, grad_w_i1;
+              sphere.grad(state_w_i, ie, data_n0, ix, iy, iz, grad_w_i0, grad_w_i1);
 
               Scalar wt = v_i0 * grad_w_i0 + v_i1 * grad_w_i1;
               wt *= -data_scale1;
@@ -638,8 +601,11 @@ struct CaarFunctorImpl {
               wt += (buffers_dpnh_dp_i(ie,ix,iy,iz) - 1.0) * scale;
               buffers_w_tens(ie,ix,iy,iz) = wt;
 
+              /*
               buffers_grad_phinh_i(ie,0,ix,iy,iz) = sphere_dinv(ie,0,0,ix,iy) * p0 + sphere_dinv(ie,0,1,ix,iy) * p1;
               buffers_grad_phinh_i(ie,1,ix,iy,iz) = sphere_dinv(ie,1,0,ix,iy) * p0 + sphere_dinv(ie,1,1,ix,iy) * p1;
+              */
+              sphere.grad(state_phinh_i, ie, data_n0, ix, iy, iz, buffers_grad_phinh_i(ie,0,ix,iy,iz), buffers_grad_phinh_i(ie,1,ix,iy,iz)); 
               Scalar pt = v_i0 * buffers_grad_phinh_i(ie,0,ix,iy,iz) + v_i1 * buffers_grad_phinh_i(ie,1,ix,iy,iz);
               pt *= -data_scale1;
               pt += state_w_i(ie,data_n0,ix,iy,iz) * gscale2;
@@ -680,6 +646,7 @@ struct CaarFunctorImpl {
             Kokkos::ThreadVectorRange(team, NUM_LEV_P),
             [&](const int iz) {
 
+              /*
               Scalar w0 = 0;
               Scalar w1 = 0;
               for (int j = 0; j < NP; j++) {
@@ -690,6 +657,8 @@ struct CaarFunctorImpl {
               w1 *= sphere_scale_factor_inv;
               v_i0[iz] = sphere_dinv(ie,0,0,ix,iy) * w0 + sphere_dinv(ie,0,1,ix,iy) * w1;
               v_i1[iz] = sphere_dinv(ie,1,0,ix,iy) * w0 + sphere_dinv(ie,1,1,ix,iy) * w1;
+              */
+              sphere.grad(state_w_i, ie, data_n0, ix, iy, iz, v_i0[iz], v_i1[iz]);
             });
 
           ScalarPerThread ttmp10(team.team_scratch(0));
@@ -710,24 +679,6 @@ struct CaarFunctorImpl {
               ttmp1(ix,iy) = 0.25 * (state_w_i(ie,data_n0,ix,iy,iz) * state_w_i(ie,data_n0,ix,iy,iz) + state_w_i(ie,data_n0,ix,iy,iz+1) * state_w_i(ie,data_n0,ix,iy,iz+1));
 
               team.team_barrier();
-
-              /*
-              Scalar t0 = 0;
-              Scalar t1 = 0;
-#pragma nounroll
-              for (int j = 0; j < NP; j++) {
-                t0 += sphere_dvv(iy,j) * ttmp1(ix,j);
-                t1 += sphere_dvv(ix,j) * ttmp1(j,iy);
-              }
-              t0 *= sphere_scale_factor_inv;
-              t1 *= sphere_scale_factor_inv;
-
-              vt0 += sphere_dinv(ie,0,0,ix,iy) * t0 + sphere_dinv(ie,0,1,ix,iy) * t1;
-              vt1 += sphere_dinv(ie,1,0,ix,iy) * t0 + sphere_dinv(ie,1,1,ix,iy) * t1;
-
-              v_i0[iz] = vt0;
-              v_i1[iz] = vt1;
-              */
 
               Scalar grad0, grad1;
               sphere.grad(ttmp1, ie, ix, iy, grad0, grad1);
@@ -752,26 +703,6 @@ struct CaarFunctorImpl {
               Scalar vt1 = v_i1[iz];
 
               team.team_barrier();
-
-              /*
-              Scalar s0 = 0;
-              Scalar s1 = 0;
-              Scalar t0 = 0;
-              Scalar t1 = 0;
-#pragma nounroll
-              for (int j = 0; j < NP; j++) {
-                s0 += sphere_dvv(iy,j) * ttmp0(ix,j);
-                s1 += sphere_dvv(ix,j) * ttmp0(j,iy);
-                if (pgrad_correction) {
-                  t0 += sphere_dvv(iy,j) * ttmp1(ix,j);
-                  t1 += sphere_dvv(ix,j) * ttmp1(j,iy);
-                }
-              }
-              s0 *= sphere_scale_factor_inv;
-              s1 *= sphere_scale_factor_inv;
-              const Scalar grad_exner0 = sphere_dinv(ie,0,0,ix,iy) * s0 + sphere_dinv(ie,0,1,ix,iy) * s1;
-              const Scalar grad_exner1 = sphere_dinv(ie,1,0,ix,iy) * s0 + sphere_dinv(ie,1,1,ix,iy) * s1;
-              */
               Scalar grad_exner0, grad_exner1;
               sphere.grad(ttmp0, ie, ix, iy, grad_exner0, grad_exner1);
 
@@ -835,19 +766,6 @@ struct CaarFunctorImpl {
               ttmp0(ix,iy) = 0.5 * (v0 * v0 + v1 * v1);
 
               team.team_barrier();
-
-              /*
-              Scalar s0 = 0;
-              Scalar s1 = 0;
-              for (int j = 0; j < NP; j++) {
-                s0 += sphere_dvv(iy,j) * ttmp0(ix,j);
-                s1 += sphere_dvv(ix,j) * ttmp0(j,iy);
-              }
-              s0 *= sphere_scale_factor_inv;
-              s1 *= sphere_scale_factor_inv;
-              vt0 += sphere_dinv(ie,0,0,ix,iy) * s0 + sphere_dinv(ie,0,1,ix,iy) * s1;
-              vt1 += sphere_dinv(ie,1,0,ix,iy) * s0 + sphere_dinv(ie,1,1,ix,iy) * s1;
-              */
 
               Scalar grad0, grad1;
               sphere.grad(ttmp0, ie, ix, iy, grad0, grad1);
