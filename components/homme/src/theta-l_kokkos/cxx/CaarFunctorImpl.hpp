@@ -790,10 +790,10 @@ struct CaarFunctorImpl {
               v_i1[iz] = vt1;
             });
 
-          const Scalar d00 = sphere_d(ie,0,0,ix,iy);
-          const Scalar d01 = sphere_d(ie,0,1,ix,iy);
-          const Scalar d10 = sphere_d(ie,1,0,ix,iy);
-          const Scalar d11 = sphere_d(ie,1,1,ix,iy);
+          // const Scalar d00 = sphere_d(ie,0,0,ix,iy);
+          // const Scalar d01 = sphere_d(ie,0,1,ix,iy);
+          // const Scalar d10 = sphere_d(ie,1,0,ix,iy);
+          // const Scalar d11 = sphere_d(ie,1,1,ix,iy);
           const Scalar fcor = geometry_fcor(ie,ix,iy);
           const Scalar rrdmd = (1.0 / sphere_metdet(ie,ix,iy)) * sphere_scale_factor_inv;
 
@@ -806,8 +806,8 @@ struct CaarFunctorImpl {
               const Scalar v0 = state_v(ie,data_n0,0,ix,iy,iz);
               const Scalar v1 = state_v(ie,data_n0,1,ix,iy,iz);
 
-              ttmp0(ix,iy) = d00 * v0 + d01 * v1;
-              ttmp1(ix,iy) = d10 * v0 + d11 * v1;
+              ttmp0(ix,iy) = sphere_d(ie,0,0,ix,iy) * v0 + sphere_d(ie,0,1,ix,iy) * v1;
+              ttmp1(ix,iy) = sphere_d(ie,1,0,ix,iy) * v0 + sphere_d(ie,1,1,ix,iy) * v1;
 
               team.team_barrier();
 
