@@ -1176,6 +1176,42 @@ public:
   Real m_scale_factor_inv, m_laplacian_rigid_factor;
 };
 
+struct SphereGlobal {
+
+  ExecViewManaged<const Real * [2][2][NP][NP]>  m_dinv;
+  ExecViewManaged<const Real [NP][NP]>          m_dvv;
+  ExecViewManaged<const Real * [NP][NP]>        m_metdet;
+  Real m_scale_factor_inv;
+
+  SphereGlobal(const SphereOperators &that):
+    m_dinv(that.m_dinv),
+    m_dvv(that.dvv),
+    m_metdet(that.m_metdet),
+    m_scale_factor_inv(that.m_scale_factor_inv)
+  {}
+
+  KOKKOS_INLINE_FUNCTION SphereGlobal(const SphereGlobal &) = default;
+
+  template <typename Team, typename TempXY>
+  KOKKOS_INLINE_FUNCTION Scalar div(const Team &team, TempXY &ttmp0, TempXY &ttmp1, const int ie, const int ix, const int iy, const Scalar v0, const Scalar v1) const {
+
+    team.team_barrier();
+
+    ttmp0(ix,iy) = (m_dinv(ie,0,0,ix,iy) * v0 + m_dinv(ie,1,0,ix,iy) * v1) * m_metdet(ie,ix,iy);
+    ttmp1(ix,iy) = (m_dinv(ie,0,1,ix,iy) * v0 + m_dinv(ie,1,1,ix,iy) * v1) * m_metdet(ie,ix,iy);
+
+    team.team_barrier();
+
+    Scalar duv = 0;
+#pragma nounroll
+    for (int j = 0; j < NP; j++) {
+      duv += m_dvv(iy,j) * ttmp0(ix,j) + m_dvv(ix,j) * ttmp1(j,iy);
+    }
+    const Scalar rrdmd = (1.0 / m_metdet(ie,ix,iy)) * m_scale_factor_inv;
+    return (duv * rrdmd);
+  }
+};
+
 } // namespace Homme
 
 #endif // HOMMEXX_SPHERE_OPERATORS_HPP

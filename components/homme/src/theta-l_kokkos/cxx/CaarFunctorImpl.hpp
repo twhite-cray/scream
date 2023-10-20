@@ -402,6 +402,7 @@ struct CaarFunctorImpl {
       auto &sphere_dvv = m_sphere_ops.dvv;
       auto &sphere_metdet = m_sphere_ops.m_metdet;
       const Real sphere_scale_factor_inv = m_sphere_ops.m_scale_factor_inv;
+      SphereGlobal sphere(m_sphere_ops);
 
       auto &state_dp3d = m_state.m_dp3d;
       auto &state_phinh_i = m_state.m_phinh_i;
@@ -455,13 +456,6 @@ struct CaarFunctorImpl {
           ScalarPerThread ttmp10(team.team_scratch(0));
           auto ttmp1 = Kokkos::subview(ttmp10,dz,Kokkos::ALL,Kokkos::ALL);
 
-          // const Scalar dinv00 = sphere_dinv(ie,0,0,ix,iy);
-          // const Scalar dinv01 = sphere_dinv(ie,0,1,ix,iy);
-          // const Scalar dinv10 = sphere_dinv(ie,1,0,ix,iy);
-          // const Scalar dinv11 = sphere_dinv(ie,1,1,ix,iy);
-
-          const Scalar rrdmd = (1.0 / sphere_metdet(ie,ix,iy)) * sphere_scale_factor_inv;
-
           Kokkos::parallel_for(
             Kokkos::ThreadVectorRange(team, NUM_LEV),
             [&](const int iz) {
@@ -473,6 +467,7 @@ struct CaarFunctorImpl {
               derived_vn0(ie,0,ix,iy,iz) += data_eta_ave_w * v0;
               derived_vn0(ie,1,ix,iy,iz) += data_eta_ave_w * v1;
 
+/*
               team.team_barrier();
 
               ttmp0(ix,iy) = (sphere_dinv(ie,0,0,ix,iy) * v0 + sphere_dinv(ie,1,0,ix,iy) * v1) * sphere_metdet(ie,ix,iy);
@@ -485,7 +480,10 @@ struct CaarFunctorImpl {
               for (int j = 0; j < NP; j++) {
                 duv += sphere_dvv(iy,j) * ttmp0(ix,j) + sphere_dvv(ix,j) * ttmp1(j,iy);
               }
+              const Scalar rrdmd = (1.0 / sphere_metdet(ie,ix,iy)) * sphere_scale_factor_inv;
               const Scalar dvdp = duv * rrdmd;
+*/
+              const Scalar dvdp = sphere.div(team, ttmp0, ttmp1, ie, ix, iy, v0, v1);
 
               team.team_barrier();
 
@@ -582,11 +580,6 @@ struct CaarFunctorImpl {
               dz = k;
             });
 
-          // const Scalar dinv00 = sphere_dinv(ie,0,0,ix,iy);
-          // const Scalar dinv01 = sphere_dinv(ie,0,1,ix,iy);
-          // const Scalar dinv10 = sphere_dinv(ie,1,0,ix,iy);
-          // const Scalar dinv11 = sphere_dinv(ie,1,1,ix,iy);
-
           const Scalar gradphis0 = geometry_gradphis(ie,0,ix,iy);
           const Scalar gradphis1 = geometry_gradphis(ie,1,ix,iy);
 
@@ -673,11 +666,6 @@ struct CaarFunctorImpl {
 
           ScalarPerPoint ptmp1(team.team_scratch(0));
           auto v_i1 = Kokkos::subview(ptmp1,ix,iy,Kokkos::ALL);
-
-          // const Scalar dinv00 = sphere_dinv(ie,0,0,ix,iy);
-          // const Scalar dinv01 = sphere_dinv(ie,0,1,ix,iy);
-          // const Scalar dinv10 = sphere_dinv(ie,1,0,ix,iy);
-          // const Scalar dinv11 = sphere_dinv(ie,1,1,ix,iy);
 
           Kokkos::parallel_for(
             Kokkos::ThreadVectorRange(team, NUM_LEV_P),
@@ -791,7 +779,6 @@ struct CaarFunctorImpl {
             });
 
           const Scalar fcor = geometry_fcor(ie,ix,iy);
-          const Scalar rrdmd = (1.0 / sphere_metdet(ie,ix,iy)) * sphere_scale_factor_inv;
 
           Kokkos::parallel_for(
             Kokkos::ThreadVectorRange(team, NUM_LEV),
@@ -812,6 +799,7 @@ struct CaarFunctorImpl {
               for (int j = 0; j < NP; j++) {
                 dvmdu += sphere_dvv(iy,j) * ttmp1(ix,j) - sphere_dvv(ix,j) * ttmp0(j,iy);
               }
+              const Scalar rrdmd = (1.0 / sphere_metdet(ie,ix,iy)) * sphere_scale_factor_inv;
               const Scalar vort = dvmdu * rrdmd + fcor;
 
               Scalar vt0 = v_i0[iz] - v1 * vort;
