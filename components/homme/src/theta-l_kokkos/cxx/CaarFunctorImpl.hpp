@@ -492,6 +492,7 @@ struct CaarFunctorImpl {
 
               team.team_barrier();
 
+              /*
               Scalar t0 = 0;
               Scalar t1 = 0;
 #pragma nounroll
@@ -503,6 +504,9 @@ struct CaarFunctorImpl {
               t1 *= sphere_scale_factor_inv;
               const Scalar grad_tmp0 = sphere_dinv(ie,0,0,ix,iy) * t0 + sphere_dinv(ie,0,1,ix,iy) * t1;
               const Scalar grad_tmp1 = sphere_dinv(ie,1,0,ix,iy) * t0 + sphere_dinv(ie,1,1,ix,iy) * t1;
+              */
+              Scalar grad_tmp0, grad_tmp1;
+              sphere.grad(ttmp0, ie, ix, iy, grad_tmp0, grad_tmp1);
 
               Scalar tt = dvdp * ttmp0(ix,iy);
               tt += grad_tmp0 * v0 + grad_tmp1 * v1;
@@ -531,6 +535,7 @@ struct CaarFunctorImpl {
 
               team.team_barrier();
 
+              /*
               Scalar d0 = 0;
               Scalar d1 = 0;
 #pragma nounroll
@@ -542,6 +547,10 @@ struct CaarFunctorImpl {
               d1 *= sphere_scale_factor_inv;
               const Scalar grad_tmp0 = sphere_dinv(ie,0,0,ix,iy) * d0 + sphere_dinv(ie,0,1,ix,iy) * d1;
               const Scalar grad_tmp1 = sphere_dinv(ie,1,0,ix,iy) * d0 + sphere_dinv(ie,1,1,ix,iy) * d1;
+              */
+              
+              Scalar grad_tmp0, grad_tmp1;
+              sphere.grad(ttmp0, ie, ix, iy, grad_tmp0, grad_tmp1);
 
               Scalar omega_p = state_v(ie,data_n0,0,ix,iy,iz) * grad_tmp0 + state_v(ie,data_n0,1,ix,iy,iz) * grad_tmp1;
               omega_p -= 0.5 * (omega_i[iz] + omega_i[iz+1]);
@@ -702,6 +711,7 @@ struct CaarFunctorImpl {
 
               team.team_barrier();
 
+              /*
               Scalar t0 = 0;
               Scalar t1 = 0;
 #pragma nounroll
@@ -717,6 +727,12 @@ struct CaarFunctorImpl {
 
               v_i0[iz] = vt0;
               v_i1[iz] = vt1;
+              */
+
+              Scalar grad0, grad1;
+              sphere.grad(ttmp1, ie, ix, iy, grad0, grad1);
+              v_i0[iz] = vt0 + grad0;
+              v_i1[iz] = vt1 + grad1;
             });
 
           ScalarPerThread ttmp00(team.team_scratch(0));
@@ -737,6 +753,7 @@ struct CaarFunctorImpl {
 
               team.team_barrier();
 
+              /*
               Scalar s0 = 0;
               Scalar s1 = 0;
               Scalar t0 = 0;
@@ -754,6 +771,9 @@ struct CaarFunctorImpl {
               s1 *= sphere_scale_factor_inv;
               const Scalar grad_exner0 = sphere_dinv(ie,0,0,ix,iy) * s0 + sphere_dinv(ie,0,1,ix,iy) * s1;
               const Scalar grad_exner1 = sphere_dinv(ie,1,0,ix,iy) * s0 + sphere_dinv(ie,1,1,ix,iy) * s1;
+              */
+              Scalar grad_exner0, grad_exner1;
+              sphere.grad(ttmp0, ie, ix, iy, grad_exner0, grad_exner1);
 
               const Scalar vtheta = state_vtheta_dp(ie,data_n0,ix,iy,iz) / state_dp3d(ie,data_n0,ix,iy,iz);
               const Scalar cp_vtheta = PhysicalConstants::cp * vtheta;
@@ -764,10 +784,15 @@ struct CaarFunctorImpl {
                 namespace PC = PhysicalConstants;
                 constexpr Real cpt0 = PC::cp * (PC::Tref - PC::Tref_lapse_rate * PC::Tref * PC::cp / PC::g);
 
+                /*
                 t0 *= sphere_scale_factor_inv;
                 t1 *= sphere_scale_factor_inv;
                 const Scalar grad_lexner0 = sphere_dinv(ie,0,0,ix,iy) * t0 + sphere_dinv(ie,0,1,ix,iy) * t1;
                 const Scalar grad_lexner1 = sphere_dinv(ie,1,0,ix,iy) * t0 + sphere_dinv(ie,1,1,ix,iy) * t1;
+                */
+
+                Scalar grad_lexner0, grad_lexner1;
+                sphere.grad(ttmp1, ie, ix, iy, grad_lexner0, grad_lexner1);
                 const Scalar exner_inv = 1.0 / exneriz;
 
                 vt0 += cpt0 * (grad_lexner0 - grad_exner0 * exner_inv);
@@ -811,6 +836,7 @@ struct CaarFunctorImpl {
 
               team.team_barrier();
 
+              /*
               Scalar s0 = 0;
               Scalar s1 = 0;
               for (int j = 0; j < NP; j++) {
@@ -821,9 +847,13 @@ struct CaarFunctorImpl {
               s1 *= sphere_scale_factor_inv;
               vt0 += sphere_dinv(ie,0,0,ix,iy) * s0 + sphere_dinv(ie,0,1,ix,iy) * s1;
               vt1 += sphere_dinv(ie,1,0,ix,iy) * s0 + sphere_dinv(ie,1,1,ix,iy) * s1;
+              */
 
-              buffers_v_tens(ie,0,ix,iy,iz) = vt0;
-              buffers_v_tens(ie,1,ix,iy,iz) = vt1;
+              Scalar grad0, grad1;
+              sphere.grad(ttmp0, ie, ix, iy, grad0, grad1);
+
+              buffers_v_tens(ie,0,ix,iy,iz) = vt0 + grad0;
+              buffers_v_tens(ie,1,ix,iy,iz) = vt1 + grad1;
             });
         });
 

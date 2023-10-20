@@ -1210,6 +1210,23 @@ struct SphereGlobal {
     const Scalar rrdmd = (1.0 / m_metdet(ie,ix,iy)) * m_scale_factor_inv;
     return (duv * rrdmd);
   }
+
+  template <typename TempXY>
+  KOKKOS_INLINE_FUNCTION void grad(TempXY &ttmp0, const int ie, const int ix, const int iy, Scalar &grad0, Scalar &grad1) const {
+
+    Scalar t0 = 0;
+    Scalar t1 = 0;
+#pragma nounroll
+    for (int j = 0; j < NP; j++) {
+      t0 += m_dvv(iy,j) * ttmp0(ix,j);
+      t1 += m_dvv(ix,j) * ttmp0(j,iy);
+    }
+    t0 *= m_scale_factor_inv;
+    t1 *= m_scale_factor_inv;
+    grad0 = m_dinv(ie,0,0,ix,iy) * t0 + m_dinv(ie,0,1,ix,iy) * t1;
+    grad1 = m_dinv(ie,1,0,ix,iy) * t0 + m_dinv(ie,1,1,ix,iy) * t1;
+  }
+
 };
 
 } // namespace Homme
