@@ -1178,12 +1178,14 @@ public:
 
 struct SphereGlobal {
 
+  ExecViewManaged<const Real * [2][2][NP][NP]>  m_d;
   ExecViewManaged<const Real * [2][2][NP][NP]>  m_dinv;
   ExecViewManaged<const Real [NP][NP]>          m_dvv;
   ExecViewManaged<const Real * [NP][NP]>        m_metdet;
   Real m_scale_factor_inv;
 
   SphereGlobal(const SphereOperators &that):
+    m_d(that.m_d),
     m_dinv(that.m_dinv),
     m_dvv(that.dvv),
     m_metdet(that.m_metdet),
@@ -1240,6 +1242,23 @@ struct SphereGlobal {
     t1 *= m_scale_factor_inv;
     grad0 = m_dinv(ie,0,0,ix,iy) * t0 + m_dinv(ie,0,1,ix,iy) * t1;
     grad1 = m_dinv(ie,1,0,ix,iy) * t0 + m_dinv(ie,1,1,ix,iy) * t1;
+  }
+
+  template <typename TeamT, typename TempT>
+  KOKKOS_INLINE_FUNCTION Scalar vort(TeamT &team, TempT &ttmp0, TempT &ttmp1, const int ie, const int ix, const int iy, const Scalar v0, const Scalar v1) const {
+
+    ttmp0(ix,iy) = m_d(ie,0,0,ix,iy) * v0 + m_d(ie,0,1,ix,iy) * v1;
+    ttmp1(ix,iy) = m_d(ie,1,0,ix,iy) * v0 + m_d(ie,1,1,ix,iy) * v1;
+
+    team.team_barrier();
+
+    Scalar dvmdu = 0;
+#pragma nounroll
+    for (int j = 0; j < NP; j++) {
+      dvmdu += m_dvv(iy,j) * ttmp1(ix,j) - m_dvv(ix,j) * ttmp0(j,iy);
+    }
+    const Scalar rrdmd = (1.0 / m_metdet(ie,ix,iy)) * m_scale_factor_inv;
+    return dvmdu * rrdmd;
   }
 
 };
