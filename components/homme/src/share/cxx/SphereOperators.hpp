@@ -1263,6 +1263,52 @@ struct SphereGlobal {
 
 };
 
+template <typename TeamT>
+struct SphereThread {
+
+  const TeamT &m_team;
+  const SphereGlobal &m_g;
+  const Scalar m_dinv00;
+  const Scalar m_dinv01;
+  const Scalar m_dinv10;
+  const Scalar m_dinv11;
+  const Scalar m_metdet;
+  const Scalar m_rrdmd;
+  const int m_ix;
+  const int m_iy;
+
+  KOKKOS_INLINE_FUNCTION SphereThread(const TeamT &team, const SphereGlobal &that, const int ie, const int ix, const int iy):
+    m_team(team),
+    m_g(that),
+    m_dinv00(that.m_dinv(ie,0,0,ix,iy)),
+    m_dinv01(that.m_dinv(ie,0,1,ix,iy)),
+    m_dinv10(that.m_dinv(ie,1,0,ix,iy)),
+    m_dinv11(that.m_dinv(ie,1,1,ix,iy)),
+    m_metdet(that.m_metdet(ie,ix,iy)),
+    m_rrdmd((1.0 / that.m_metdet(ie,ix,iy)) * that.m_scale_factor_inv),
+    m_ix(ix),
+    m_iy(iy)
+  {}
+
+  template <typename TempT>
+  KOKKOS_INLINE_FUNCTION Scalar div(TempT &ttmp0, TempT &ttmp1, const Scalar v0, const Scalar v1) const {
+    m_team.team_barrier();
+
+    ttmp0(m_ix,m_iy) = (m_dinv00 * v0 + m_dinv10 * v1) * m_metdet;
+    ttmp1(m_ix,m_iy) = (m_dinv01 * v0 + m_dinv11 * v1) * m_metdet;
+
+    m_team.team_barrier();
+
+    Scalar duv = 0;
+#pragma nounroll
+    for (int j = 0; j < NP; j++) {
+      duv += m_g.m_dvv(m_iy,j) * ttmp0(m_ix,j) + m_g.m_dvv(m_ix,j) * ttmp1(j,m_iy);
+    }
+    return (duv * m_rrdmd);
+  }
+
+};
+
 } // namespace Homme
 
 #endif // HOMMEXX_SPHERE_OPERATORS_HPP
