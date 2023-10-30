@@ -475,7 +475,7 @@ struct CaarFunctorImpl {
               team.team_barrier();
 
               Scalar grad_tmp0, grad_tmp1;
-              sphereG.grad(ttmp0, ie, ix, iy, grad_tmp0, grad_tmp1);
+              sphereT.grad(ttmp0, grad_tmp0, grad_tmp1);
 
               Scalar tt = dvdp * ttmp0(ix,iy);
               tt += grad_tmp0 * v0 + grad_tmp1 * v1;
@@ -505,7 +505,7 @@ struct CaarFunctorImpl {
               team.team_barrier();
 
               Scalar grad_tmp0, grad_tmp1;
-              sphereG.grad(ttmp0, ie, ix, iy, grad_tmp0, grad_tmp1);
+              sphereT.grad(ttmp0, grad_tmp0, grad_tmp1);
 
               Scalar omega_p = state_v(ie,data_n0,0,ix,iy,iz) * grad_tmp0 + state_v(ie,data_n0,1,ix,iy,iz) * grad_tmp1;
               omega_p -= 0.5 * (omega_i[iz] + omega_i[iz+1]);
@@ -623,6 +623,8 @@ struct CaarFunctorImpl {
           ScalarPerThread ttmp10(team.team_scratch(0));
           auto ttmp1 = Kokkos::subview(ttmp10,dz,Kokkos::ALL,Kokkos::ALL);
 
+          SphereThread<Team> sphereT(team, sphereG, ie, ix, iy);
+
           Kokkos::parallel_for(
             Kokkos::ThreadVectorRange(team, NUM_LEV),
             [&](const int iz) {
@@ -640,7 +642,7 @@ struct CaarFunctorImpl {
               team.team_barrier();
 
               Scalar grad0, grad1;
-              sphereG.grad(ttmp1, ie, ix, iy, grad0, grad1);
+              sphereT.grad(ttmp1, grad0, grad1);
               v_i0[iz] = vt0 + grad0;
               v_i1[iz] = vt1 + grad1;
             });
@@ -663,7 +665,7 @@ struct CaarFunctorImpl {
 
               team.team_barrier();
               Scalar grad_exner0, grad_exner1;
-              sphereG.grad(ttmp0, ie, ix, iy, grad_exner0, grad_exner1);
+              sphereT.grad(ttmp0, grad_exner0, grad_exner1);
 
               const Scalar vtheta = state_vtheta_dp(ie,data_n0,ix,iy,iz) / state_dp3d(ie,data_n0,ix,iy,iz);
               const Scalar cp_vtheta = PhysicalConstants::cp * vtheta;
@@ -674,7 +676,7 @@ struct CaarFunctorImpl {
                 namespace PC = PhysicalConstants;
                 constexpr Real cpt0 = PC::cp * (PC::Tref - PC::Tref_lapse_rate * PC::Tref * PC::cp / PC::g);
                 Scalar grad_lexner0, grad_lexner1;
-                sphereG.grad(ttmp1, ie, ix, iy, grad_lexner0, grad_lexner1);
+                sphereT.grad(ttmp1, grad_lexner0, grad_lexner1);
                 const Scalar exner_inv = 1.0 / exneriz;
 
                 vt0 += cpt0 * (grad_lexner0 - grad_exner0 * exner_inv);
@@ -708,7 +710,7 @@ struct CaarFunctorImpl {
               team.team_barrier();
 
               Scalar grad0, grad1;
-              sphereG.grad(ttmp0, ie, ix, iy, grad0, grad1);
+              sphereT.grad(ttmp0, grad0, grad1);
 
               buffers_v_tens(ie,0,ix,iy,iz) = vt0 + grad0;
               buffers_v_tens(ie,1,ix,iy,iz) = vt1 + grad1;
