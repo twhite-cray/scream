@@ -1274,10 +1274,8 @@ struct SphereThread {
   const Scalar m_dinv11;
   const Scalar m_metdet;
   const Scalar m_rrdmd;
-  const int &m_ix;
-  const int &m_iy;
 
-  KOKKOS_INLINE_FUNCTION SphereThread(const TeamT &team, const SphereGlobal &that, const int ie, const int &ix, const int &iy):
+  KOKKOS_INLINE_FUNCTION SphereThread(const TeamT &team, const SphereGlobal &that, const int ie, const int ix, const int iy):
     m_team(team),
     m_g(that),
     m_dinv00(that.m_dinv(ie,0,0,ix,iy)),
@@ -1285,37 +1283,51 @@ struct SphereThread {
     m_dinv10(that.m_dinv(ie,1,0,ix,iy)),
     m_dinv11(that.m_dinv(ie,1,1,ix,iy)),
     m_metdet(that.m_metdet(ie,ix,iy)),
-    m_rrdmd((1.0 / that.m_metdet(ie,ix,iy)) * that.m_scale_factor_inv),
-    m_ix(ix),
-    m_iy(iy)
+    m_rrdmd((1.0 / that.m_metdet(ie,ix,iy)) * that.m_scale_factor_inv)
   {}
 
   template <typename TempT>
-  KOKKOS_INLINE_FUNCTION Scalar div(TempT &ttmp0, TempT &ttmp1, const Scalar v0, const Scalar v1) const {
+  KOKKOS_INLINE_FUNCTION Scalar div(TempT &ttmp0, TempT &ttmp1, const int ix, const int iy, const Scalar v0, const Scalar v1) const {
     m_team.team_barrier();
 
-    ttmp0(m_ix,m_iy) = (m_dinv00 * v0 + m_dinv10 * v1) * m_metdet;
-    ttmp1(m_ix,m_iy) = (m_dinv01 * v0 + m_dinv11 * v1) * m_metdet;
+    ttmp0(ix,iy) = (m_dinv00 * v0 + m_dinv10 * v1) * m_metdet;
+    ttmp1(ix,iy) = (m_dinv01 * v0 + m_dinv11 * v1) * m_metdet;
 
     m_team.team_barrier();
 
     Scalar duv = 0;
 #pragma nounroll
     for (int j = 0; j < NP; j++) {
-      duv += m_g.m_dvv(m_iy,j) * ttmp0(m_ix,j) + m_g.m_dvv(m_ix,j) * ttmp1(j,m_iy);
+      duv += m_g.m_dvv(iy,j) * ttmp0(ix,j) + m_g.m_dvv(ix,j) * ttmp1(j,iy);
     }
     return (duv * m_rrdmd);
   }
 
   template <typename TempT>
-  KOKKOS_INLINE_FUNCTION void grad(TempT &ttmp0, Scalar &grad0, Scalar &grad1) const {
+  KOKKOS_INLINE_FUNCTION void grad(const TempT &ttmp0, const int ix, const int iy, Scalar &grad0, Scalar &grad1) const {
 
     Scalar t0 = 0;
     Scalar t1 = 0;
 #pragma nounroll
     for (int j = 0; j < NP; j++) {
-      t0 += m_g.m_dvv(m_iy,j) * ttmp0(m_ix,j);
-      t1 += m_g.m_dvv(m_ix,j) * ttmp0(j,m_iy);
+      t0 += m_g.m_dvv(iy,j) * ttmp0(ix,j);
+      t1 += m_g.m_dvv(ix,j) * ttmp0(j,iy);
+    }
+    t0 *= m_g.m_scale_factor_inv;
+    t1 *= m_g.m_scale_factor_inv;
+    grad0 = m_dinv00 * t0 + m_dinv01 * t1;
+    grad1 = m_dinv10 * t0 + m_dinv11 * t1;
+  }
+
+  template <typename ViewT>
+  KOKKOS_INLINE_FUNCTION void grad(const ViewT &v, const int ie, const int it, const int ix, const int iy, const int iz, Scalar &grad0, Scalar &grad1) const {
+
+    Scalar t0 = 0;
+    Scalar t1 = 0;
+#pragma nounroll
+    for (int j = 0; j < NP; j++) {
+      t0 += m_g.m_dvv(iy,j) * v(ie,it,ix,j,iz);
+      t1 += m_g.m_dvv(ix,j) * v(ie,it,j,iy,iz);
     }
     t0 *= m_g.m_scale_factor_inv;
     t1 *= m_g.m_scale_factor_inv;
