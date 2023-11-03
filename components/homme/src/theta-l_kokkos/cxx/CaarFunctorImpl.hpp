@@ -689,6 +689,7 @@ struct CaarFunctorImpl {
             });
 
           const Scalar fcor = geometry_fcor(ie,ix,iy);
+          SphereThreadVort sphereTV(sphereG, ie, ix, iy);
 
           Kokkos::parallel_for(
             Kokkos::ThreadVectorRange(team, NUM_LEV),
@@ -699,7 +700,7 @@ struct CaarFunctorImpl {
               const Scalar v0 = state_v(ie,data_n0,0,ix,iy,iz);
               const Scalar v1 = state_v(ie,data_n0,1,ix,iy,iz);
 
-              const Scalar vort = fcor + sphereG.vort(team, ttmp0, ttmp1, ie, ix, iy, v0, v1);
+              const Scalar vort = fcor + sphereG.vort(sphereT, sphereTV, team, ttmp0, ttmp1, ie, ix, iy, v0, v1);
 
               Scalar vt0 = v_i0[iz] - v1 * vort;
               Scalar vt1 = v_i1[iz] + v0 * vort;
