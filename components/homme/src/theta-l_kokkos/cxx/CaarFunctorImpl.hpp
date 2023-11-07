@@ -538,7 +538,6 @@ struct CaarFunctorImpl {
 
           const Scalar gradphis0 = geometry_gradphis(ie,0,ix,iy);
           const Scalar gradphis1 = geometry_gradphis(ie,1,ix,iy);
-
           const SphereThread sphereT(sphereG, ie, ix, iy);
 
           Kokkos::parallel_for(
@@ -548,6 +547,10 @@ struct CaarFunctorImpl {
               const Scalar dm = (iz > 0) ? state_dp3d(ie,data_n0,ix,iy,iz-1) : 0;
               const Scalar dz = (iz < NUM_LEV) ? state_dp3d(ie,data_n0,ix,iy,iz) : 0;
               const Scalar denom = 1.0 / (dz + dm);
+
+              const Scalar pm = (iz > 0) ? buffers_pnh(ie,ix,iy,iz-1) : pi_i00;
+              const Scalar pz = (iz < NUM_LEV) ? buffers_pnh(ie,ix,iy,iz) : pm + 0.5 * dm;
+              buffers_dpnh_dp_i(ie,ix,iy,iz) = 2.0 * (pz - pm) * denom;
 
               const Scalar v0m = (iz > 0) ? state_v(ie,data_n0,0,ix,iy,iz-1) : 0;
               const Scalar v0z = (iz < NUM_LEV) ? state_v(ie,data_n0,0,ix,iy,iz) : 0;
@@ -562,10 +565,6 @@ struct CaarFunctorImpl {
 
               Scalar wt = v_i0 * grad_w_i0 + v_i1 * grad_w_i1;
               wt *= -data_scale1;
-
-              const Scalar pm = (iz > 0) ? buffers_pnh(ie,ix,iy,iz-1) : pi_i00;
-              const Scalar pz = (iz < NUM_LEV) ? buffers_pnh(ie,ix,iy,iz) : pm + 0.5 * dm;
-              buffers_dpnh_dp_i(ie,ix,iy,iz) = 2.0 * (pz - pm) * denom;
 
               const Scalar scale = (iz == NUM_LEV) ? gscale1 : gscale2;
               wt += (buffers_dpnh_dp_i(ie,ix,iy,iz) - 1.0) * scale;
