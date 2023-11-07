@@ -536,13 +536,6 @@ struct CaarFunctorImpl {
           const int ix = tr / NP;
           const int iy = tr % NP;
 
-          int dz = -1;
-          Kokkos::parallel_for(
-            Kokkos::ThreadVectorRange(team, WARP_SIZE),
-            [&](const int k) {
-              dz = k;
-            });
-
           const Scalar gradphis0 = geometry_gradphis(ie,0,ix,iy);
           const Scalar gradphis1 = geometry_gradphis(ie,1,ix,iy);
 
