@@ -1176,6 +1176,8 @@ public:
   Real m_scale_factor_inv, m_laplacian_rigid_factor;
 };
 
+static constexpr int WARP_SIZE = warpSize;
+
 struct SphereGlobal;
 
 struct SphereThread {
@@ -1219,19 +1221,19 @@ struct SphereGlobal {
   KOKKOS_INLINE_FUNCTION SphereGlobal(const SphereGlobal &) = default;
 
   template <typename TeamT, typename TempT>
-  KOKKOS_INLINE_FUNCTION Scalar div(const SphereThread &st, const TeamT &team, TempT &ttmp0, TempT &ttmp1, const int ie, const int ix, const int iy, const Scalar v0, const Scalar v1) const {
+  KOKKOS_INLINE_FUNCTION Scalar div(const SphereThread &st, const TeamT &team, TempT &ttmp0, TempT &ttmp1, const int ie, const int ix, const int iy, const int dz, const Scalar v0, const Scalar v1) const {
 
     team.team_barrier();
 
-    ttmp0(ix,iy) = (st.dinv00 * v0 + st.dinv10 * v1) * st.metdet;
-    ttmp1(ix,iy) = (st.dinv01 * v0 + st.dinv11 * v1) * st.metdet;
+    ttmp0(dz,ix,iy) = (st.dinv00 * v0 + st.dinv10 * v1) * st.metdet;
+    ttmp1(dz,ix,iy) = (st.dinv01 * v0 + st.dinv11 * v1) * st.metdet;
 
     team.team_barrier();
 
     Scalar duv = 0;
 #pragma nounroll
     for (int j = 0; j < NP; j++) {
-      duv += m_dvv(iy,j) * ttmp0(ix,j) + m_dvv(ix,j) * ttmp1(j,iy);
+      duv += m_dvv(iy,j) * ttmp0(dz,ix,j) + m_dvv(ix,j) * ttmp1(dz,j,iy);
     }
     return (duv * st.rrdmd);
   }
@@ -1256,14 +1258,14 @@ template <typename TeamT, typename TempT>
   }
 
   template <typename TempT>
-  KOKKOS_INLINE_FUNCTION void grad(const SphereThread &st, TempT &ttmp0, const int ie, const int ix, const int iy, Scalar &grad0, Scalar &grad1) const {
+  KOKKOS_INLINE_FUNCTION void grad(const SphereThread &st, TempT &ttmp0, const int ie, const int ix, const int iy, const int dz, Scalar &grad0, Scalar &grad1) const {
 
     Scalar t0 = 0;
     Scalar t1 = 0;
 #pragma nounroll
     for (int j = 0; j < NP; j++) {
-      t0 += m_dvv(iy,j) * ttmp0(ix,j);
-      t1 += m_dvv(ix,j) * ttmp0(j,iy);
+      t0 += m_dvv(iy,j) * ttmp0(dz,ix,j);
+      t1 += m_dvv(ix,j) * ttmp0(dz,j,iy);
     }
     t0 *= m_scale_factor_inv;
     t1 *= m_scale_factor_inv;
@@ -1318,17 +1320,17 @@ template <typename TeamT, typename TempT>
   }
 
   template <typename TeamT, typename TempT>
-  KOKKOS_INLINE_FUNCTION Scalar vort(const SphereThread &st, const SphereThreadVort &svt, TeamT &team, TempT &ttmp0, TempT &ttmp1, const int ie, const int ix, const int iy, const Scalar v0, const Scalar v1) const {
+  KOKKOS_INLINE_FUNCTION Scalar vort(const SphereThread &st, const SphereThreadVort &svt, TeamT &team, TempT &ttmp0, TempT &ttmp1, const int ie, const int ix, const int iy, const int dz, const Scalar v0, const Scalar v1) const {
 
-    ttmp0(ix,iy) = svt.d00 * v0 + svt.d01 * v1;
-    ttmp1(ix,iy) = svt.d10 * v0 + svt.d11 * v1;
+    ttmp0(dz,ix,iy) = svt.d00 * v0 + svt.d01 * v1;
+    ttmp1(dz,ix,iy) = svt.d10 * v0 + svt.d11 * v1;
 
     team.team_barrier();
 
     Scalar dvmdu = 0;
 #pragma nounroll
     for (int j = 0; j < NP; j++) {
-      dvmdu += m_dvv(iy,j) * ttmp1(ix,j) - m_dvv(ix,j) * ttmp0(j,iy);
+      dvmdu += m_dvv(iy,j) * ttmp1(dz,ix,j) - m_dvv(ix,j) * ttmp0(dz,j,iy);
     }
     return dvmdu * st.rrdmd;
   }
