@@ -413,12 +413,8 @@ struct CaarFunctorImpl {
         KOKKOS_LAMBDA(const ElemPerTeam::Team &team) {
 
           ElemPerTeam t(team, data_n0);
-          ElemPerTeam::TeamScratch ttmp0(t.t.team_scratch(0));
-          ElemPerTeam::TeamScratch ttmp1(t.t.team_scratch(0));
-          ElemPerTeam::ElemScratch ptmp0(t.t.team_scratch(0));
-          ElemPerTeam::ElemScratch ptmp1(t.t.team_scratch(0));
-
-          auto pi_i = Kokkos::subview(ptmp0,t.x,t.y,Kokkos::ALL);
+#if 0
+          auto pi_i = Kokkos::subview(t.etmpA,t.x,t.y,Kokkos::ALL);
 
           Kokkos::parallel_scan(
             t.perLev,
@@ -427,6 +423,8 @@ struct CaarFunctorImpl {
               sum += state_dp3d(t.e,t.n0,t.x,t.y,z);
               if (last) pi_i[z+1] = sum;
             });
+#endif
+          auto pi_i = t.scanN0(state_dp3d, pi_i00);
 
           const SphereThread sphereT(sphereG, t.e, t.x, t.y);
 
@@ -442,26 +440,27 @@ struct CaarFunctorImpl {
               derived_vn0(t.e,1,t.x,t.y,z) += data_eta_ave_w * v1;
 
               const int dz = z % WARP_SIZE;
-              const Scalar dvdp = sphereG.div(sphereT, t.t, ttmp0, ttmp1, t.e, t.x, t.y, dz, v0, v1);
+              const Scalar dvdp = sphereG.div(sphereT, t.t, t.ttmpA, t.ttmpB, t.e, t.x, t.y, dz, v0, v1);
 
               t.barrier();
 
               const Scalar vtheta = state_vtheta_dp(t.e,t.n0,t.x,t.y,z) / dp3d;
-              ttmp0(dz,t.x,t.y) = vtheta;
+              t.ttmpA(dz,t.x,t.y) = vtheta;
 
               t.barrier();
 
               Scalar grad_tmp0, grad_tmp1;
-              sphereG.grad(sphereT, ttmp0, t.e, t.x, t.y, dz, grad_tmp0, grad_tmp1);
+              sphereG.grad(sphereT, t.ttmpA, t.e, t.x, t.y, dz, grad_tmp0, grad_tmp1);
 
-              Scalar tt = dvdp * ttmp0(dz,t.x,t.y);
+              Scalar tt = dvdp * t.ttmpA(dz,t.x,t.y);
               tt += grad_tmp0 * v0 + grad_tmp1 * v1;
               buffers_theta_tens(t.e,t.x,t.y,z) = tt;
 
               buffers_dp_tens(t.e,t.x,t.y,z) = dvdp;
             });
 
-          auto omega_i = Kokkos::subview(ptmp1,t.x,t.y,Kokkos::ALL);
+#if 0
+          auto omega_i = Kokkos::subview(t.etmpB,t.x,t.y,Kokkos::ALL);
 
           Kokkos::parallel_scan(
             t.perLev,
@@ -470,6 +469,8 @@ struct CaarFunctorImpl {
               sum += buffers_dp_tens(t.e,t.x,t.y,z);
               if (last) omega_i[z+1] = sum;
             });
+#endif
+          auto omega_i = t.scan(buffers_dp_tens, 0);
 
           Kokkos::parallel_for(
             t.perLev,
@@ -477,12 +478,12 @@ struct CaarFunctorImpl {
               t.barrier();
 
               const int dz = z % WARP_SIZE;
-              ttmp0(dz,t.x,t.y) = 0.5 * (pi_i[z] + pi_i[z+1]);
+              t.ttmpA(dz,t.x,t.y) = 0.5 * (pi_i[z] + pi_i[z+1]);
 
               t.barrier();
 
               Scalar grad_tmp0, grad_tmp1;
-              sphereG.grad(sphereT, ttmp0, t.e, t.x, t.y, dz, grad_tmp0, grad_tmp1);
+              sphereG.grad(sphereT, t.ttmpA, t.e, t.x, t.y, dz, grad_tmp0, grad_tmp1);
 
               Scalar omega_p = state_v(t.e,t.n0,0,t.x,t.y,z) * grad_tmp0 + state_v(t.e,t.n0,1,t.x,t.y,z) * grad_tmp1;
               omega_p -= 0.5 * (omega_i[z] + omega_i[z+1]);
