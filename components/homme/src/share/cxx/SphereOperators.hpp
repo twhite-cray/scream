@@ -1177,6 +1177,39 @@ public:
 };
 
 static constexpr int WARP_SIZE = warpSize;
+static constexpr int NPNP = NP*NP;
+
+struct ElemPerTeam {
+
+  using Policy = Kokkos::TeamPolicy<ExecSpace>;
+  using Team = Policy::member_type;
+
+  using TeamScratch = Kokkos::View< Scalar[WARP_SIZE][NP][NP], ExecSpace::scratch_memory_space, Kokkos::MemoryTraits<Kokkos::Unmanaged> >;
+
+  using ElemScratch = Kokkos::View< Scalar[NP][NP][NUM_LEV_P], ExecSpace::scratch_memory_space, Kokkos::MemoryTraits<Kokkos::Unmanaged> >;
+
+  static Policy getPolicy(const int num_elems) {
+    return Policy(num_elems, NPNP, WARP_SIZE).set_scratch_size(0, Kokkos::PerTeam(2 * TeamScratch::shmem_size() + 2 * ElemScratch::shmem_size()));
+  }
+
+  const Team &t;
+  const int n0;
+  const int e;
+  const int x;
+  const int y;
+  const decltype(Kokkos::ThreadVectorRange(t, NUM_LEV)) perLev;
+
+  KOKKOS_INLINE_FUNCTION ElemPerTeam(const Team &team, const int time_step):
+    t(team),
+    n0(time_step),
+    e(t.league_rank()),
+    x(t.team_rank() / NP),
+    y(t.team_rank() % NP),
+    perLev(Kokkos::ThreadVectorRange(t, NUM_LEV))
+  {}
+
+  KOKKOS_INLINE_FUNCTION void barrier() const { t.team_barrier(); }
+};
 
 struct SphereGlobal;
 

@@ -123,19 +123,7 @@ struct CaarFunctorImpl {
 
   Kokkos::Array<std::shared_ptr<BoundaryExchange>, NUM_TIME_LEVELS> m_bes;
 
-  static constexpr int NPNP = NP * NP;
-
-  using ScalarPerThread = Kokkos::View<
-    Scalar[WARP_SIZE][NP][NP],
-    ExecSpace::scratch_memory_space,
-    Kokkos::MemoryTraits<Kokkos::Unmanaged>
-      >;
-
-  using ScalarPerPoint = Kokkos::View<
-    Scalar[NP][NP][NUM_LEV_P],
-    ExecSpace::scratch_memory_space,
-    Kokkos::MemoryTraits<Kokkos::Unmanaged>
-      >;
+  const Kokkos::TeamPolicy<ExecSpace> m_elem_per_team_policy;
 
   CaarFunctorImpl(const Elements &elements, const Tracers &/* tracers */,
                   const ReferenceElement &ref_FE, const HybridVCoord &hvcoord,
@@ -154,6 +142,7 @@ struct CaarFunctorImpl {
       , m_policy_pre (Homme::get_default_team_policy<ExecSpace,TagPreExchange>(m_num_elems))
       , m_policy_post (0,m_num_elems*NP*NP)
       , m_tu(m_policy_pre)
+      , m_elem_per_team_policy(ElemPerTeam::getPolicy(m_num_elems))
   {
     // Initialize equation of state
     m_eos.init(params.theta_hydrostatic_mode,m_hvcoord);
@@ -171,6 +160,7 @@ struct CaarFunctorImpl {
       , m_policy_pre (Homme::get_default_team_policy<ExecSpace,TagPreExchange>(m_num_elems))
       , m_policy_post (0,num_elems*NP*NP)
       , m_tu(m_policy_pre)
+      , m_elem_per_team_policy(ElemPerTeam::getPolicy(m_num_elems))
   {}
 
   void setup (const Elements &elements, const Tracers &/*tracers*/,
@@ -368,6 +358,8 @@ struct CaarFunctorImpl {
 
       using TeamPolicy = Kokkos::TeamPolicy<ExecSpace>;
       using Team = TeamPolicy::member_type;
+      using ScalarPerThread = ElemPerTeam::TeamScratch;
+      using ScalarPerPoint = ElemPerTeam::ElemScratch;
 
       auto &buffers_dp_tens = m_buffers.dp_tens;
       auto &buffers_dpnh_dp_i = m_buffers.dpnh_dp_i;
@@ -417,102 +409,96 @@ struct CaarFunctorImpl {
       // compute_dp_and_theta_tens
       Kokkos::parallel_for(
         "caar compute div_vdp scan_quantities dp_and_theta_tens",
-        TeamPolicy(m_num_elems, NPNP, WARP_SIZE).
-        set_scratch_size(0, Kokkos::PerTeam(2 * ScalarPerThread::shmem_size() + 2 * ScalarPerPoint::shmem_size())),
-        KOKKOS_LAMBDA(const Team &team) {
+        m_elem_per_team_policy,
+        KOKKOS_LAMBDA(const ElemPerTeam::Team &team) {
 
-          const int ie = team.league_rank();
-          const int tr = team.team_rank();
-          const int ix = tr / NP;
-          const int iy = tr % NP;
+          ElemPerTeam t(team, data_n0);
+          ElemPerTeam::TeamScratch ttmp0(t.t.team_scratch(0));
+          ElemPerTeam::TeamScratch ttmp1(t.t.team_scratch(0));
+          ElemPerTeam::ElemScratch ptmp0(t.t.team_scratch(0));
+          ElemPerTeam::ElemScratch ptmp1(t.t.team_scratch(0));
 
-          ScalarPerPoint ptmp0(team.team_scratch(0));
-          auto pi_i = Kokkos::subview(ptmp0,ix,iy,Kokkos::ALL);
+          auto pi_i = Kokkos::subview(ptmp0,t.x,t.y,Kokkos::ALL);
 
           Kokkos::parallel_scan(
-            Kokkos::ThreadVectorRange(team, NUM_LEV),
-            [&](const int iz, Scalar &sum, const bool last) {
-              if (iz == 0) pi_i[0] = sum = pi_i00;
-              sum += state_dp3d(ie,data_n0,ix,iy,iz);
-              if (last) pi_i[iz+1] = sum;
+            t.perLev,
+            [&](const int z, Scalar &sum, const bool last) {
+              if (z == 0) pi_i[0] = sum = pi_i00;
+              sum += state_dp3d(t.e,t.n0,t.x,t.y,z);
+              if (last) pi_i[z+1] = sum;
             });
 
-          ScalarPerThread ttmp0(team.team_scratch(0));
-
-          ScalarPerThread ttmp1(team.team_scratch(0));
-
-          const SphereThread sphereT(sphereG, ie, ix, iy);
+          const SphereThread sphereT(sphereG, t.e, t.x, t.y);
 
           Kokkos::parallel_for(
-            Kokkos::ThreadVectorRange(team, NUM_LEV),
-            [&](const int iz) {
+            t.perLev,
+            [&](const int z) {
 
-              const Scalar dp3d = state_dp3d(ie,data_n0,ix,iy,iz);
-              const Scalar v0 = state_v(ie,data_n0,0,ix,iy,iz) * dp3d;
-              const Scalar v1 = state_v(ie,data_n0,1,ix,iy,iz) * dp3d;
+              const Scalar dp3d = state_dp3d(t.e,t.n0,t.x,t.y,z);
+              const Scalar v0 = state_v(t.e,t.n0,0,t.x,t.y,z) * dp3d;
+              const Scalar v1 = state_v(t.e,t.n0,1,t.x,t.y,z) * dp3d;
 
-              derived_vn0(ie,0,ix,iy,iz) += data_eta_ave_w * v0;
-              derived_vn0(ie,1,ix,iy,iz) += data_eta_ave_w * v1;
+              derived_vn0(t.e,0,t.x,t.y,z) += data_eta_ave_w * v0;
+              derived_vn0(t.e,1,t.x,t.y,z) += data_eta_ave_w * v1;
 
-              const int dz = iz % WARP_SIZE;
-              const Scalar dvdp = sphereG.div(sphereT, team, ttmp0, ttmp1, ie, ix, iy, dz, v0, v1);
+              const int dz = z % WARP_SIZE;
+              const Scalar dvdp = sphereG.div(sphereT, t.t, ttmp0, ttmp1, t.e, t.x, t.y, dz, v0, v1);
 
-              team.team_barrier();
+              t.barrier();
 
-              const Scalar vtheta = state_vtheta_dp(ie,data_n0,ix,iy,iz) / dp3d;
-              ttmp0(dz,ix,iy) = vtheta;
+              const Scalar vtheta = state_vtheta_dp(t.e,t.n0,t.x,t.y,z) / dp3d;
+              ttmp0(dz,t.x,t.y) = vtheta;
 
-              team.team_barrier();
+              t.barrier();
 
               Scalar grad_tmp0, grad_tmp1;
-              sphereG.grad(sphereT, ttmp0, ie, ix, iy, dz, grad_tmp0, grad_tmp1);
+              sphereG.grad(sphereT, ttmp0, t.e, t.x, t.y, dz, grad_tmp0, grad_tmp1);
 
-              Scalar tt = dvdp * ttmp0(dz,ix,iy);
+              Scalar tt = dvdp * ttmp0(dz,t.x,t.y);
               tt += grad_tmp0 * v0 + grad_tmp1 * v1;
-              buffers_theta_tens(ie,ix,iy,iz) = tt;
+              buffers_theta_tens(t.e,t.x,t.y,z) = tt;
 
-              buffers_dp_tens(ie,ix,iy,iz) = dvdp;
+              buffers_dp_tens(t.e,t.x,t.y,z) = dvdp;
             });
 
-          ScalarPerPoint ptmp1(team.team_scratch(0));
-          auto omega_i = Kokkos::subview(ptmp1,ix,iy,Kokkos::ALL);
+          auto omega_i = Kokkos::subview(ptmp1,t.x,t.y,Kokkos::ALL);
 
           Kokkos::parallel_scan(
-            Kokkos::ThreadVectorRange(team, NUM_LEV),
-            [&](const int iz, Scalar &sum, const bool last) {
-              if (iz == 0) omega_i[0] = sum = 0;
-              sum += buffers_dp_tens(ie,ix,iy,iz);
-              if (last) omega_i[iz+1] = sum;
+            t.perLev,
+            [&](const int z, Scalar &sum, const bool last) {
+              if (z == 0) omega_i[0] = sum = 0;
+              sum += buffers_dp_tens(t.e,t.x,t.y,z);
+              if (last) omega_i[z+1] = sum;
             });
 
           Kokkos::parallel_for(
-            Kokkos::ThreadVectorRange(team, NUM_LEV),
-            [&](const int iz) {
-              team.team_barrier();
+            t.perLev,
+            [&](const int z) {
+              t.barrier();
 
-              const int dz = iz % WARP_SIZE;
-              ttmp0(dz,ix,iy) = 0.5 * (pi_i[iz] + pi_i[iz+1]);
+              const int dz = z % WARP_SIZE;
+              ttmp0(dz,t.x,t.y) = 0.5 * (pi_i[z] + pi_i[z+1]);
 
-              team.team_barrier();
+              t.barrier();
 
               Scalar grad_tmp0, grad_tmp1;
-              sphereG.grad(sphereT, ttmp0, ie, ix, iy, dz, grad_tmp0, grad_tmp1);
+              sphereG.grad(sphereT, ttmp0, t.e, t.x, t.y, dz, grad_tmp0, grad_tmp1);
 
-              Scalar omega_p = state_v(ie,data_n0,0,ix,iy,iz) * grad_tmp0 + state_v(ie,data_n0,1,ix,iy,iz) * grad_tmp1;
-              omega_p -= 0.5 * (omega_i[iz] + omega_i[iz+1]);
-              derived_omega_p(ie,ix,iy,iz) += data_eta_ave_w * omega_p;
+              Scalar omega_p = state_v(t.e,t.n0,0,t.x,t.y,z) * grad_tmp0 + state_v(t.e,t.n0,1,t.x,t.y,z) * grad_tmp1;
+              omega_p -= 0.5 * (omega_i[z] + omega_i[z+1]);
+              derived_omega_p(t.e,t.x,t.y,z) += data_eta_ave_w * omega_p;
 
-              const Scalar dphi = state_phinh_i(ie,data_n0,ix,iy,iz+1) - state_phinh_i(ie,data_n0,ix,iy,iz);
-              if ((state_vtheta_dp(ie,data_n0,ix,iy,iz)[0] < 0) || (dphi[0] > 0)) abort();
+              const Scalar dphi = state_phinh_i(t.e,t.n0,t.x,t.y,z+1) - state_phinh_i(t.e,t.n0,t.x,t.y,z);
+              if ((state_vtheta_dp(t.e,t.n0,t.x,t.y,z)[0] < 0) || (dphi[0] > 0)) abort();
 
-              Scalar exneriz = -PhysicalConstants::Rgas * state_vtheta_dp(ie,data_n0,ix,iy,iz) / dphi;
-              Scalar pnhiz = exneriz * divp0;
-              pnhiz = pow(pnhiz, div1mkappa);
-              pnhiz *= PhysicalConstants::p0;
-              exneriz = pnhiz / exneriz;
+              Scalar exnerz = -PhysicalConstants::Rgas * state_vtheta_dp(t.e,t.n0,t.x,t.y,z) / dphi;
+              Scalar pnhz = exnerz * divp0;
+              pnhz = pow(pnhz, div1mkappa);
+              pnhz *= PhysicalConstants::p0;
+              exnerz = pnhz / exnerz;
 
-              buffers_pnh(ie,ix,iy,iz) = pnhiz;
-              buffers_exner(ie,ix,iy,iz) = exneriz;
+              buffers_pnh(t.e,t.x,t.y,z) = pnhz;
+              buffers_exner(t.e,t.x,t.y,z) = exnerz;
             });
         });
 
