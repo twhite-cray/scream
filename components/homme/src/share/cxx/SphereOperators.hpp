@@ -1187,6 +1187,7 @@ struct ElemPerTeam {
   using TeamScratch = Kokkos::View< Scalar[WARP_SIZE][NP][NP], ExecSpace::scratch_memory_space, Kokkos::MemoryTraits<Kokkos::Unmanaged> >;
 
   using ElemScratch = Kokkos::View< Scalar[NP][NP][NUM_LEV_P], ExecSpace::scratch_memory_space, Kokkos::MemoryTraits<Kokkos::Unmanaged> >;
+
   using ColScratch = Kokkos::Subview< ElemScratch, int, int, std::remove_const_t<decltype(Kokkos::ALL)> >;
 
   static Policy getPolicy(const int num_elems) {
@@ -1201,6 +1202,7 @@ struct ElemPerTeam {
   const decltype(Kokkos::ThreadVectorRange(t, NUM_LEV)) perLev;
   ElemScratch etmpA, etmpB;
   TeamScratch ttmpA, ttmpB;
+  ColScratch ctmpA, ctmpB;
 
   KOKKOS_INLINE_FUNCTION ElemPerTeam(const Team &team, const int time_step):
     t(team),
@@ -1212,7 +1214,9 @@ struct ElemPerTeam {
     etmpA(t.team_scratch(0)),
     etmpB(t.team_scratch(0)),
     ttmpA(t.team_scratch(0)),
-    ttmpB(t.team_scratch(0))
+    ttmpB(t.team_scratch(0)),
+    ctmpA(Kokkos::subview(etmpA,x,y,Kokkos::ALL)),
+    ctmpB(Kokkos::subview(etmpB,x,y,Kokkos::ALL))
   {}
 
   KOKKOS_INLINE_FUNCTION void barrier() const { t.team_barrier(); }
@@ -1220,30 +1224,28 @@ struct ElemPerTeam {
   using TimeView = ExecViewManaged<Scalar*[NUM_TIME_LEVELS][NP][NP][NUM_LEV]>;
   using StepView = ExecViewManaged<Scalar*[NP][NP][NUM_LEV]>;
 
-  KOKKOS_INLINE_FUNCTION ColScratch scanN0(const TimeView &v, const Scalar init) const {
+  KOKKOS_INLINE_FUNCTION const ColScratch &scanN0(const TimeView &v, const Scalar init) const {
 
-    ColScratch s = Kokkos::subview(etmpA, x, y, Kokkos::ALL);
     Kokkos::parallel_scan(
       perLev,
       [&](const int z, Scalar &sum, const bool last) {
-        if (z == 0) s[0] = sum = init;
+        if (z == 0) ctmpA[0] = sum = init;
         sum += v(e,n0,x,y,z);
-        if (last) s[z+1] = sum;
+        if (last) ctmpA[z+1] = sum;
       });
-    return s;
+    return ctmpA;
   }
 
-  KOKKOS_INLINE_FUNCTION ColScratch scan(const StepView &v, const Scalar init) const {
+  KOKKOS_INLINE_FUNCTION const ColScratch &scan(const StepView &v, const Scalar init) const {
 
-    ColScratch s = Kokkos::subview(etmpB, x, y, Kokkos::ALL);
     Kokkos::parallel_scan(
       perLev,
       [&](const int z, Scalar &sum, const bool last) {
-        if (z == 0) s[0] = sum = init;
+        if (z == 0) ctmpB[0] = sum = init;
         sum += v(e,x,y,z);
-        if (last) s[z+1] = sum;
+        if (last) ctmpB[z+1] = sum;
       });
-    return s;
+    return ctmpB;
   }
 
 };
