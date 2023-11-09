@@ -1179,77 +1179,6 @@ public:
 static constexpr int WARP_SIZE = warpSize;
 static constexpr int NPNP = NP*NP;
 
-struct ElemPerTeam {
-
-  using Policy = Kokkos::TeamPolicy<ExecSpace>;
-  using Team = Policy::member_type;
-
-  using TeamScratch = Kokkos::View< Scalar[WARP_SIZE][NP][NP], ExecSpace::scratch_memory_space, Kokkos::MemoryTraits<Kokkos::Unmanaged> >;
-
-  using ElemScratch = Kokkos::View< Scalar[NP][NP][NUM_LEV_P], ExecSpace::scratch_memory_space, Kokkos::MemoryTraits<Kokkos::Unmanaged> >;
-
-  using ColScratch = Kokkos::Subview< ElemScratch, int, int, std::remove_const_t<decltype(Kokkos::ALL)> >;
-
-  static Policy getPolicy(const int num_elems) {
-    return Policy(num_elems, NPNP, WARP_SIZE).set_scratch_size(0, Kokkos::PerTeam(2 * TeamScratch::shmem_size() + 2 * ElemScratch::shmem_size()));
-  }
-
-  const Team &t;
-  const int n0;
-  const int e;
-  const int x;
-  const int y;
-  const decltype(Kokkos::ThreadVectorRange(t, NUM_LEV)) perLev;
-  ElemScratch etmpA, etmpB;
-  TeamScratch ttmpA, ttmpB;
-  ColScratch ctmpA, ctmpB;
-
-  KOKKOS_INLINE_FUNCTION ElemPerTeam(const Team &team, const int time_step):
-    t(team),
-    n0(time_step),
-    e(t.league_rank()),
-    x(t.team_rank() / NP),
-    y(t.team_rank() % NP),
-    perLev(Kokkos::ThreadVectorRange(t, NUM_LEV)),
-    etmpA(t.team_scratch(0)),
-    etmpB(t.team_scratch(0)),
-    ttmpA(t.team_scratch(0)),
-    ttmpB(t.team_scratch(0)),
-    ctmpA(Kokkos::subview(etmpA,x,y,Kokkos::ALL)),
-    ctmpB(Kokkos::subview(etmpB,x,y,Kokkos::ALL))
-  {}
-
-  KOKKOS_INLINE_FUNCTION void barrier() const { t.team_barrier(); }
-
-  using TimeView = ExecViewManaged<Scalar*[NUM_TIME_LEVELS][NP][NP][NUM_LEV]>;
-  using StepView = ExecViewManaged<Scalar*[NP][NP][NUM_LEV]>;
-
-  KOKKOS_INLINE_FUNCTION const ColScratch &scanN0(const TimeView &v, const Scalar init) const {
-
-    Kokkos::parallel_scan(
-      perLev,
-      [&](const int z, Scalar &sum, const bool last) {
-        if (z == 0) ctmpA[0] = sum = init;
-        sum += v(e,n0,x,y,z);
-        if (last) ctmpA[z+1] = sum;
-      });
-    return ctmpA;
-  }
-
-  KOKKOS_INLINE_FUNCTION const ColScratch &scan(const StepView &v, const Scalar init) const {
-
-    Kokkos::parallel_scan(
-      perLev,
-      [&](const int z, Scalar &sum, const bool last) {
-        if (z == 0) ctmpB[0] = sum = init;
-        sum += v(e,x,y,z);
-        if (last) ctmpB[z+1] = sum;
-      });
-    return ctmpB;
-  }
-
-};
-
 struct SphereGlobal;
 
 struct SphereThread {
@@ -1440,6 +1369,100 @@ KOKKOS_INLINE_FUNCTION SphereThreadVort::SphereThreadVort(const SphereGlobal &g,
   d10(g.m_d(ie,1,0,ix,iy)),
   d11(g.m_d(ie,1,1,ix,iy))
 {}
+
+struct ElemPerTeam {
+
+  using Policy = Kokkos::TeamPolicy<ExecSpace>;
+  using Team = Policy::member_type;
+
+  using TeamScratch = Kokkos::View< Scalar[WARP_SIZE][NP][NP], ExecSpace::scratch_memory_space, Kokkos::MemoryTraits<Kokkos::Unmanaged> >;
+
+  using ElemScratch = Kokkos::View< Scalar[NP][NP][NUM_LEV_P], ExecSpace::scratch_memory_space, Kokkos::MemoryTraits<Kokkos::Unmanaged> >;
+
+  using ColScratch = Kokkos::Subview< ElemScratch, int, int, std::remove_const_t<decltype(Kokkos::ALL)> >;
+
+  static Policy getPolicy(const int num_elems) {
+    return Policy(num_elems, NPNP, WARP_SIZE).set_scratch_size(0, Kokkos::PerTeam(2 * TeamScratch::shmem_size() + 2 * ElemScratch::shmem_size()));
+  }
+
+  const SphereGlobal &g;
+  const Team &t;
+  const int n0;
+  const int e;
+  const int x;
+  const int y;
+  const decltype(Kokkos::ThreadVectorRange(t, NUM_LEV)) perLev;
+  ElemScratch etmpA, etmpB;
+  TeamScratch ttmpA, ttmpB;
+  ColScratch ctmpA, ctmpB;
+  const Scalar metdet, rrdmd;
+
+  KOKKOS_INLINE_FUNCTION ElemPerTeam(const SphereGlobal &sphereGlobal, const Team &team, const int time_step):
+    g(sphereGlobal),
+    t(team),
+    n0(time_step),
+    e(t.league_rank()),
+    x(t.team_rank() / NP),
+    y(t.team_rank() % NP),
+    perLev(Kokkos::ThreadVectorRange(t, NUM_LEV)),
+    etmpA(t.team_scratch(0)),
+    etmpB(t.team_scratch(0)),
+    ttmpA(t.team_scratch(0)),
+    ttmpB(t.team_scratch(0)),
+    ctmpA(Kokkos::subview(etmpA,x,y,Kokkos::ALL)),
+    ctmpB(Kokkos::subview(etmpB,x,y,Kokkos::ALL)),
+    metdet(g.m_metdet(e,x,y)),
+    rrdmd((1.0 / metdet) * g.m_scale_factor_inv)
+  {}
+
+  KOKKOS_INLINE_FUNCTION void barrier() const { t.team_barrier(); }
+
+  using TimeView = ExecViewManaged<Scalar*[NUM_TIME_LEVELS][NP][NP][NUM_LEV]>;
+  using StepView = ExecViewManaged<Scalar*[NP][NP][NUM_LEV]>;
+
+  KOKKOS_INLINE_FUNCTION const ColScratch &scanN0(const TimeView &v, const Scalar init) const {
+
+    Kokkos::parallel_scan(
+      perLev,
+      [&](const int z, Scalar &sum, const bool last) {
+        if (z == 0) ctmpA[0] = sum = init;
+        sum += v(e,n0,x,y,z);
+        if (last) ctmpA[z+1] = sum;
+      });
+    return ctmpA;
+  }
+
+  KOKKOS_INLINE_FUNCTION const ColScratch &scan(const StepView &v, const Scalar init) const {
+
+    Kokkos::parallel_scan(
+      perLev,
+      [&](const int z, Scalar &sum, const bool last) {
+        if (z == 0) ctmpB[0] = sum = init;
+        sum += v(e,x,y,z);
+        if (last) ctmpB[z+1] = sum;
+      });
+    return ctmpB;
+  }
+
+  KOKKOS_INLINE_FUNCTION Scalar div(const int z, const Scalar v0, const Scalar v1) const {
+
+    barrier();
+
+    const int dz = z % WARP_SIZE;
+    ttmpA(dz,x,y) = (g.m_dinv(e,0,0,x,y) * v0 + g.m_dinv(e,1,0,x,y) * v1) * metdet;
+    ttmpB(dz,x,y) = (g.m_dinv(e,0,1,x,y) * v0 + g.m_dinv(e,1,1,x,y) * v1) * metdet;
+
+    barrier();
+
+    Scalar duv = 0;
+#pragma nounroll
+    for (int j = 0; j < NP; j++) {
+      duv += g.m_dvv(y,j) * ttmpA(dz,x,j) + g.m_dvv(x,j) * ttmpB(dz,j,y);
+    }
+    return (duv * rrdmd);
+  }
+
+};
 
 } // namespace Homme
 
