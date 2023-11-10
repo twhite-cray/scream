@@ -413,9 +413,6 @@ struct CaarFunctorImpl {
         KOKKOS_LAMBDA(const ElemPerTeam::Team &team) {
 
           ElemPerTeam t(sphereG, team, data_n0);
-          auto pi_i = t.scanN0(state_dp3d, pi_i00);
-
-          const SphereThread sphereT(sphereG, t.e, t.x, t.y);
 
           Kokkos::parallel_for(
             t.perLev,
@@ -428,41 +425,30 @@ struct CaarFunctorImpl {
               derived_vn0(t.e,0,t.x,t.y,z) += data_eta_ave_w * v0;
               derived_vn0(t.e,1,t.x,t.y,z) += data_eta_ave_w * v1;
 
-              const int dz = z % WARP_SIZE;
-              //const Scalar dvdp = sphereG.div(sphereT, t.t, t.ttmpA, t.ttmpB, t.e, t.x, t.y, dz, v0, v1);
               const Scalar dvdp = t.div(z, v0, v1);
 
-              t.barrier();
-
               const Scalar vtheta = state_vtheta_dp(t.e,t.n0,t.x,t.y,z) / dp3d;
-              t.ttmpA(dz,t.x,t.y) = vtheta;
-
-              t.barrier();
+              Scalar tt = dvdp * vtheta;
 
               Scalar grad_tmp0, grad_tmp1;
-              sphereG.grad(sphereT, t.ttmpA, t.e, t.x, t.y, dz, grad_tmp0, grad_tmp1);
+              t.grad(vtheta, z, grad_tmp0, grad_tmp1);
 
-              Scalar tt = dvdp * t.ttmpA(dz,t.x,t.y);
               tt += grad_tmp0 * v0 + grad_tmp1 * v1;
               buffers_theta_tens(t.e,t.x,t.y,z) = tt;
 
               buffers_dp_tens(t.e,t.x,t.y,z) = dvdp;
             });
 
-          auto omega_i = t.scan(buffers_dp_tens, 0);
+          const auto pi_i = t.scanN0(state_dp3d, pi_i00);
+          const auto omega_i = t.scan(buffers_dp_tens, 0);
 
           Kokkos::parallel_for(
             t.perLev,
             [&](const int z) {
-              t.barrier();
 
-              const int dz = z % WARP_SIZE;
-              t.ttmpA(dz,t.x,t.y) = 0.5 * (pi_i[z] + pi_i[z+1]);
-
-              t.barrier();
-
+              const Scalar pi_h = 0.5 * (pi_i[z] + pi_i[z+1]);
               Scalar grad_tmp0, grad_tmp1;
-              sphereG.grad(sphereT, t.ttmpA, t.e, t.x, t.y, dz, grad_tmp0, grad_tmp1);
+              t.grad(pi_h, z, grad_tmp0, grad_tmp1);
 
               Scalar omega_p = state_v(t.e,t.n0,0,t.x,t.y,z) * grad_tmp0 + state_v(t.e,t.n0,1,t.x,t.y,z) * grad_tmp1;
               omega_p -= 0.5 * (omega_i[z] + omega_i[z+1]);

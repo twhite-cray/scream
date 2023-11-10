@@ -1462,6 +1462,26 @@ struct ElemPerTeam {
     return (duv * rrdmd);
   }
 
+  KOKKOS_INLINE_FUNCTION void grad(const Scalar v, const int z, Scalar &grad0, Scalar &grad1) const {
+    barrier();
+
+    const int dz = z % WARP_SIZE;
+    ttmpA(dz,x,y) = v;
+
+    barrier();
+
+    Scalar t0 = 0;
+    Scalar t1 = 0;
+    for (int j = 0; j < NP; j++) {
+      t0 += g.m_dvv(y,j) * ttmpA(dz,x,j);
+      t1 += g.m_dvv(x,j) * ttmpA(dz,j,y);
+    }
+    t0 *= g.m_scale_factor_inv;
+    t1 *= g.m_scale_factor_inv;
+    grad0 = g.m_dinv(e,0,0,x,y) * t0 + g.m_dinv(e,0,1,x,y) * t1;
+    grad1 = g.m_dinv(e,1,0,x,y) * t0 + g.m_dinv(e,1,1,x,y) * t1;
+  }
+
 };
 
 } // namespace Homme
