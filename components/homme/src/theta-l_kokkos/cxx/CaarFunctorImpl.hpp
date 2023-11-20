@@ -377,6 +377,7 @@ struct CaarFunctorImpl {
       auto &buffers_phi_tens = m_buffers.phi_tens;
       auto &buffers_pnh = m_buffers.pnh;
       auto &buffers_theta_tens = m_buffers.theta_tens;
+      auto &buffers_v_i = m_buffers.v_i;
       auto &buffers_v_tens = m_buffers.v_tens;
       auto &buffers_w_tens = m_buffers.w_tens;
 
@@ -578,6 +579,17 @@ struct CaarFunctorImpl {
           const int iy = ixy % NP;
           const int iz = team.team_rank();
 
+          Scalar a0 = 0;
+          Scalar a1 = 0;
+          for (int j = 0; j < NP; j++) {
+            a0 += sphere_dvv(iy,j) * state_w_i(ie,data_n0,ix,j,iz); 
+            a1 += sphere_dvv(ix,j) * state_w_i(ie,data_n0,j,iy,iz);
+          }
+          a0 *= sphere_scale_factor_inv;
+          a1 *= sphere_scale_factor_inv;
+          buffers_v_i(ie,0,ix,iy,iz) = sphere_dinv(ie,0,0,ix,iy) * a0 + sphere_dinv(ie,0,1,ix,iy) * a1;
+          buffers_v_i(ie,1,ix,iy,iz) = sphere_dinv(ie,1,0,ix,iy) * a0 + sphere_dinv(ie,1,1,ix,iy) * a1;
+
           Scalar p0 = 0;
           Scalar p1 = 0;
           Scalar w0 = 0;
@@ -636,7 +648,7 @@ struct CaarFunctorImpl {
       Kokkos::parallel_for(
         "caar compute v_tens",
         TeamPolicy(m_num_elems, NPNP, WARP_SIZE).
-        set_scratch_size(0, Kokkos::PerTeam(2 * ScalarPerThread::shmem_size() + 2 * ScalarPerPoint::shmem_size())),
+        set_scratch_size(0, Kokkos::PerTeam(2 * ScalarPerThread::shmem_size())),
         KOKKOS_LAMBDA(const Team &team) {
 
           const int ie = team.league_rank();
@@ -651,32 +663,10 @@ struct CaarFunctorImpl {
               dz = k;
             });
 
-          ScalarPerPoint ptmp0(team.team_scratch(0));
-          auto v_i0 = Kokkos::subview(ptmp0,ix,iy,Kokkos::ALL);
-
-          ScalarPerPoint ptmp1(team.team_scratch(0));
-          auto v_i1 = Kokkos::subview(ptmp1,ix,iy,Kokkos::ALL);
-
           const Scalar dinv00 = sphere_dinv(ie,0,0,ix,iy);
           const Scalar dinv01 = sphere_dinv(ie,0,1,ix,iy);
           const Scalar dinv10 = sphere_dinv(ie,1,0,ix,iy);
           const Scalar dinv11 = sphere_dinv(ie,1,1,ix,iy);
-
-          Kokkos::parallel_for(
-            Kokkos::ThreadVectorRange(team, NUM_LEV_P),
-            [&](const int iz) {
-
-              Scalar w0 = 0;
-              Scalar w1 = 0;
-              for (int j = 0; j < NP; j++) {
-                w0 += sphere_dvv(iy,j) * state_w_i(ie,data_n0,ix,j,iz); 
-                w1 += sphere_dvv(ix,j) * state_w_i(ie,data_n0,j,iy,iz);
-              }
-              w0 *= sphere_scale_factor_inv;
-              w1 *= sphere_scale_factor_inv;
-              v_i0[iz] = dinv00 * w0 + dinv01 * w1;
-              v_i1[iz] = dinv10 * w0 + dinv11 * w1;
-            });
 
           ScalarPerThread ttmp10(team.team_scratch(0));
           auto ttmp1 = Kokkos::subview(ttmp10,dz,Kokkos::ALL,Kokkos::ALL);
@@ -690,8 +680,8 @@ struct CaarFunctorImpl {
               Scalar vt0 = 0.5 * (buffers_grad_phinh_i(ie,0,ix,iy,iz) * buffers_dpnh_dp_i(ie,ix,iy,iz) + buffers_grad_phinh_i(ie,0,ix,iy,iz+1) * buffers_dpnh_dp_i(ie,ix,iy,iz+1));
               Scalar vt1 = 0.5 * (buffers_grad_phinh_i(ie,1,ix,iy,iz) * buffers_dpnh_dp_i(ie,ix,iy,iz) + buffers_grad_phinh_i(ie,1,ix,iy,iz+1) * buffers_dpnh_dp_i(ie,ix,iy,iz+1));
 
-              vt0 -= 0.5 * (v_i0[iz] * state_w_i(ie,data_n0,ix,iy,iz) + v_i0[iz+1] * state_w_i(ie,data_n0,ix,iy,iz+1));
-              vt1 -= 0.5 * (v_i1[iz] * state_w_i(ie,data_n0,ix,iy,iz) + v_i1[iz+1] * state_w_i(ie,data_n0,ix,iy,iz+1));
+              vt0 -= 0.5 * (buffers_v_i(ie,0,ix,iy,iz) * state_w_i(ie,data_n0,ix,iy,iz) + buffers_v_i(ie,0,ix,iy,iz+1) * state_w_i(ie,data_n0,ix,iy,iz+1));
+              vt1 -= 0.5 * (buffers_v_i(ie,1,ix,iy,iz) * state_w_i(ie,data_n0,ix,iy,iz) + buffers_v_i(ie,1,ix,iy,iz+1) * state_w_i(ie,data_n0,ix,iy,iz+1));
 
               ttmp1(ix,iy) = 0.25 * (state_w_i(ie,data_n0,ix,iy,iz) * state_w_i(ie,data_n0,ix,iy,iz) + state_w_i(ie,data_n0,ix,iy,iz+1) * state_w_i(ie,data_n0,ix,iy,iz+1));
 
@@ -710,8 +700,8 @@ struct CaarFunctorImpl {
               vt0 += dinv00 * t0 + dinv01 * t1;
               vt1 += dinv10 * t0 + dinv11 * t1;
 
-              v_i0[iz] = vt0;
-              v_i1[iz] = vt1;
+              buffers_v_i(ie,0,ix,iy,iz) = vt0;
+              buffers_v_i(ie,1,ix,iy,iz) = vt1;
             });
 
           ScalarPerThread ttmp00(team.team_scratch(0));
@@ -727,8 +717,8 @@ struct CaarFunctorImpl {
               ttmp0(ix,iy) = exneriz;
               if (pgrad_correction) ttmp1(ix,iy) = log(exneriz);
 
-              Scalar vt0 = v_i0[iz];
-              Scalar vt1 = v_i1[iz];
+              Scalar vt0 = buffers_v_i(ie,0,ix,iy,iz);
+              Scalar vt1 = buffers_v_i(ie,1,ix,iy,iz);
 
               team.team_barrier();
 
@@ -769,8 +759,8 @@ struct CaarFunctorImpl {
                 vt1 += cpt0 * (grad_lexner1 - grad_exner1 * exner_inv);
               }
 
-              v_i0[iz] = vt0;
-              v_i1[iz] = vt1;
+              buffers_v_i(ie,0,ix,iy,iz) = vt0;
+              buffers_v_i(ie,1,ix,iy,iz) = vt1;
             });
 
           const Scalar d00 = sphere_d(ie,0,0,ix,iy);
@@ -802,8 +792,8 @@ struct CaarFunctorImpl {
               }
               const Scalar vort = dvmdu * rrdmd + fcor;
 
-              Scalar vt0 = v_i0[iz] - v1 * vort;
-              Scalar vt1 = v_i1[iz] + v0 * vort;
+              Scalar vt0 = buffers_v_i(ie,0,ix,iy,iz) - v1 * vort;
+              Scalar vt1 = buffers_v_i(ie,1,ix,iy,iz) + v0 * vort;
 
               team.team_barrier();
 
