@@ -568,83 +568,65 @@ struct CaarFunctorImpl {
       // compute_w_and_phi_tens
       Kokkos::parallel_for(
         "caar compute interface_quantities w_and_phi_tens",
-        TeamPolicy(m_num_elems, NPNP, WARP_SIZE),
+        TeamPolicy(m_num_elems * NPNP, NUM_LEV_P),
         KOKKOS_LAMBDA(const Team &team) {
 
-          const int ie = team.league_rank();
-          const int tr = team.team_rank();
-          const int ix = tr / NP;
-          const int iy = tr % NP;
+          const int lr = team.league_rank();
+          const int ie = lr / NPNP;
+          const int ixy = lr % NPNP;
+          const int ix = ixy / NP;
+          const int iy = ixy % NP;
+          const int iz = team.team_rank();
 
-          int dz = -1;
-          Kokkos::parallel_for(
-            Kokkos::ThreadVectorRange(team, WARP_SIZE),
-            [&](const int k) {
-              dz = k;
-            });
+          Scalar p0 = 0;
+          Scalar p1 = 0;
+          Scalar w0 = 0;
+          Scalar w1 = 0;
+#pragma nounroll
+          for (int j = 0; j < NP; j++) {
+            p0 += sphere_dvv(iy,j) * state_phinh_i(ie,data_n0,ix,j,iz);
+            w0 += sphere_dvv(iy,j) * state_w_i(ie,data_n0,ix,j,iz);
+            p1 += sphere_dvv(ix,j) * state_phinh_i(ie,data_n0,j,iy,iz);
+            w1 += sphere_dvv(ix,j) * state_w_i(ie,data_n0,j,iy,iz);
+          }
+          p0 *= sphere_scale_factor_inv;
+          p1 *= sphere_scale_factor_inv;
+          w0 *= sphere_scale_factor_inv;
+          w1 *= sphere_scale_factor_inv;
 
-          const Scalar dinv00 = sphere_dinv(ie,0,0,ix,iy);
-          const Scalar dinv01 = sphere_dinv(ie,0,1,ix,iy);
-          const Scalar dinv10 = sphere_dinv(ie,1,0,ix,iy);
-          const Scalar dinv11 = sphere_dinv(ie,1,1,ix,iy);
+          const Scalar dm = (iz > 0) ? state_dp3d(ie,data_n0,ix,iy,iz-1) : 0;
+          const Scalar dz = (iz < NUM_LEV) ? state_dp3d(ie,data_n0,ix,iy,iz) : 0;
+          const Scalar denom = 1.0 / (dz + dm);
 
-          const Scalar gradphis0 = geometry_gradphis(ie,0,ix,iy);
-          const Scalar gradphis1 = geometry_gradphis(ie,1,ix,iy);
+          const Scalar v0m = (iz > 0) ? state_v(ie,data_n0,0,ix,iy,iz-1) : 0;
+          const Scalar v0z = (iz < NUM_LEV) ? state_v(ie,data_n0,0,ix,iy,iz) : 0;
+          const Scalar v_i0 = (dz * v0z + dm * v0m) * denom;
 
-          Kokkos::parallel_for(
-            Kokkos::ThreadVectorRange(team, NUM_LEV_P),
-            [&](const int iz) {
+          const Scalar v1m = (iz > 0) ? state_v(ie,data_n0,1,ix,iy,iz-1) : 0;
+          const Scalar v1z = (iz < NUM_LEV) ? state_v(ie,data_n0,1,ix,iy,iz) : 0;
+          const Scalar v_i1 = (dz * v1z + dm * v1m) * denom;
 
-              Scalar p0 = 0;
-              Scalar p1 = 0;
-              Scalar w0 = 0;
-              Scalar w1 = 0;
-#pragma unroll 2
-              for (int j = 0; j < NP; j++) {
-                p0 += sphere_dvv(iy,j) * state_phinh_i(ie,data_n0,ix,j,iz);
-                w0 += sphere_dvv(iy,j) * state_w_i(ie,data_n0,ix,j,iz);
-                p1 += sphere_dvv(ix,j) * state_phinh_i(ie,data_n0,j,iy,iz);
-                w1 += sphere_dvv(ix,j) * state_w_i(ie,data_n0,j,iy,iz);
-              }
-              p0 *= sphere_scale_factor_inv;
-              p1 *= sphere_scale_factor_inv;
-              w0 *= sphere_scale_factor_inv;
-              w1 *= sphere_scale_factor_inv;
+          const Scalar grad_w_i0 = sphere_dinv(ie,0,0,ix,iy) * w0 + sphere_dinv(ie,0,1,ix,iy) * w1;
+          const Scalar grad_w_i1 = sphere_dinv(ie,1,0,ix,iy) * w0 + sphere_dinv(ie,1,1,ix,iy) * w1;
 
-              const Scalar dm = (iz > 0) ? state_dp3d(ie,data_n0,ix,iy,iz-1) : 0;
-              const Scalar dz = (iz < NUM_LEV) ? state_dp3d(ie,data_n0,ix,iy,iz) : 0;
-              const Scalar denom = 1.0 / (dz + dm);
+          Scalar wt = v_i0 * grad_w_i0 + v_i1 * grad_w_i1;
+          wt *= -data_scale1;
 
-              const Scalar v0m = (iz > 0) ? state_v(ie,data_n0,0,ix,iy,iz-1) : 0;
-              const Scalar v0z = (iz < NUM_LEV) ? state_v(ie,data_n0,0,ix,iy,iz) : 0;
-              const Scalar v_i0 = (dz * v0z + dm * v0m) * denom;
+          const Scalar pm = (iz > 0) ? buffers_pnh(ie,ix,iy,iz-1) : pi_i00;
+          const Scalar pz = (iz < NUM_LEV) ? buffers_pnh(ie,ix,iy,iz) : pm + 0.5 * dm;
+          buffers_dpnh_dp_i(ie,ix,iy,iz) = 2.0 * (pz - pm) * denom;
 
-              const Scalar v1m = (iz > 0) ? state_v(ie,data_n0,1,ix,iy,iz-1) : 0;
-              const Scalar v1z = (iz < NUM_LEV) ? state_v(ie,data_n0,1,ix,iy,iz) : 0;
-              const Scalar v_i1 = (dz * v1z + dm * v1m) * denom;
+          const Scalar scale = (iz == NUM_LEV) ? gscale1 : gscale2;
+          wt += (buffers_dpnh_dp_i(ie,ix,iy,iz) - 1.0) * scale;
+          buffers_w_tens(ie,ix,iy,iz) = wt;
 
-              const Scalar grad_w_i0 = dinv00 * w0 + dinv01 * w1;
-              const Scalar grad_w_i1 = dinv10 * w0 + dinv11 * w1;
-
-              Scalar wt = v_i0 * grad_w_i0 + v_i1 * grad_w_i1;
-              wt *= -data_scale1;
-
-              const Scalar pm = (iz > 0) ? buffers_pnh(ie,ix,iy,iz-1) : pi_i00;
-              const Scalar pz = (iz < NUM_LEV) ? buffers_pnh(ie,ix,iy,iz) : pm + 0.5 * dm;
-              buffers_dpnh_dp_i(ie,ix,iy,iz) = 2.0 * (pz - pm) * denom;
-
-              const Scalar scale = (iz == NUM_LEV) ? gscale1 : gscale2;
-              wt += (buffers_dpnh_dp_i(ie,ix,iy,iz) - 1.0) * scale;
-              buffers_w_tens(ie,ix,iy,iz) = wt;
-
-              buffers_grad_phinh_i(ie,0,ix,iy,iz) = dinv00 * p0 + dinv01 * p1;
-              buffers_grad_phinh_i(ie,1,ix,iy,iz) = dinv10 * p0 + dinv11 * p1;
-              Scalar pt = v_i0 * buffers_grad_phinh_i(ie,0,ix,iy,iz) + v_i1 * buffers_grad_phinh_i(ie,1,ix,iy,iz);
-              pt *= -data_scale1;
-              pt += state_w_i(ie,data_n0,ix,iy,iz) * gscale2;
-              pt += dscale * (v_i0 * gradphis0 + v_i1 * gradphis1) * hvcoord_hybrid_bi_packed[iz];
-              buffers_phi_tens(ie,ix,iy,iz) = pt;
-            });
+          buffers_grad_phinh_i(ie,0,ix,iy,iz) = sphere_dinv(ie,0,0,ix,iy) * p0 + sphere_dinv(ie,0,1,ix,iy) * p1;
+          buffers_grad_phinh_i(ie,1,ix,iy,iz) = sphere_dinv(ie,1,0,ix,iy) * p0 + sphere_dinv(ie,1,1,ix,iy) * p1;
+          Scalar pt = v_i0 * buffers_grad_phinh_i(ie,0,ix,iy,iz) + v_i1 * buffers_grad_phinh_i(ie,1,ix,iy,iz);
+          pt *= -data_scale1;
+          pt += state_w_i(ie,data_n0,ix,iy,iz) * gscale2;
+          pt += dscale * (v_i0 * geometry_gradphis(ie,0,ix,iy) + v_i1 * geometry_gradphis(ie,1,ix,iy)) * hvcoord_hybrid_bi_packed[iz];
+          buffers_phi_tens(ie,ix,iy,iz) = pt;
         });
 
       // compute_v_tens
