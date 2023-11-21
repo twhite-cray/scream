@@ -424,21 +424,19 @@ struct CaarFunctorImpl {
       // compute_div_vdp
       Kokkos::parallel_for(
         "caar compute div_vdp",
-        TeamPolicy(m_num_elems, NPNP, WARP_SIZE).
+        TeamPolicy(m_num_elems * WARPS_PER_COL, NPNP * WARP_SIZE).
         set_scratch_size(0, Kokkos::PerTeam(2 * ScalarPerThread::shmem_size())),
         KOKKOS_LAMBDA(const Team &team) {
 
-          const int ie = team.league_rank();
+          const int lr = team.league_rank();
+          const int ie = lr / WARPS_PER_COL;
+          const int iw = lr % WARPS_PER_COL;
           const int tr = team.team_rank();
-          const int ix = tr / NP;
-          const int iy = tr % NP;
-
-          int dz = -1;
-          Kokkos::parallel_for(
-            Kokkos::ThreadVectorRange(team, WARP_SIZE),
-            [&](const int k) {
-              dz = k;
-            });
+          const int ixy = tr / WARP_SIZE;
+          const int ix = ixy / NP;
+          const int iy = ixy % NP;
+          const int dz = tr % WARP_SIZE;
+          const int iz = dz + iw * WARP_SIZE;
 
           ScalarPerThread ttmp00(team.team_scratch(0));
           auto ttmp0 = Kokkos::subview(ttmp00,dz,Kokkos::ALL,Kokkos::ALL);
@@ -454,56 +452,51 @@ struct CaarFunctorImpl {
           const Scalar metdet = sphere_metdet(ie,ix,iy);
           const Scalar rrdmd = (1.0 / metdet) * sphere_scale_factor_inv;
 
-          Kokkos::parallel_for(
-            Kokkos::ThreadVectorRange(team, NUM_LEV),
-            [&](const int iz) {
+          const Scalar dp3d = state_dp3d(ie,data_n0,ix,iy,iz);
+          const Scalar v0 = state_v(ie,data_n0,0,ix,iy,iz) * dp3d;
+          const Scalar v1 = state_v(ie,data_n0,1,ix,iy,iz) * dp3d;
 
-              const Scalar dp3d = state_dp3d(ie,data_n0,ix,iy,iz);
-              const Scalar v0 = state_v(ie,data_n0,0,ix,iy,iz) * dp3d;
-              const Scalar v1 = state_v(ie,data_n0,1,ix,iy,iz) * dp3d;
+          derived_vn0(ie,0,ix,iy,iz) += data_eta_ave_w * v0;
+          derived_vn0(ie,1,ix,iy,iz) += data_eta_ave_w * v1;
 
-              derived_vn0(ie,0,ix,iy,iz) += data_eta_ave_w * v0;
-              derived_vn0(ie,1,ix,iy,iz) += data_eta_ave_w * v1;
+          team.team_barrier();
 
-              team.team_barrier();
+          ttmp0(ix,iy) = (dinv00 * v0 + dinv10 * v1) * metdet;
+          ttmp1(ix,iy) = (dinv01 * v0 + dinv11 * v1) * metdet;
 
-              ttmp0(ix,iy) = (dinv00 * v0 + dinv10 * v1) * metdet;
-              ttmp1(ix,iy) = (dinv01 * v0 + dinv11 * v1) * metdet;
+          team.team_barrier();
 
-              team.team_barrier();
-
-              Scalar duv = 0;
+          Scalar duv = 0;
 #pragma nounroll
-              for (int j = 0; j < NP; j++) {
-                duv += sphere_dvv(iy,j) * ttmp0(ix,j) + sphere_dvv(ix,j) * ttmp1(j,iy);
-              }
-              const Scalar dvdp = duv * rrdmd;
+          for (int j = 0; j < NP; j++) {
+            duv += sphere_dvv(iy,j) * ttmp0(ix,j) + sphere_dvv(ix,j) * ttmp1(j,iy);
+          }
+          const Scalar dvdp = duv * rrdmd;
 
-              team.team_barrier();
+          team.team_barrier();
 
-              const Scalar vtheta = state_vtheta_dp(ie,data_n0,ix,iy,iz) / dp3d;
-              ttmp0(ix,iy) = vtheta;
+          const Scalar vtheta = state_vtheta_dp(ie,data_n0,ix,iy,iz) / dp3d;
+          ttmp0(ix,iy) = vtheta;
 
-              team.team_barrier();
+          team.team_barrier();
 
-              Scalar t0 = 0;
-              Scalar t1 = 0;
+          Scalar t0 = 0;
+          Scalar t1 = 0;
 #pragma nounroll
-              for (int j = 0; j < NP; j++) {
-                t0 += sphere_dvv(iy,j) * ttmp0(ix,j);
-                t1 += sphere_dvv(ix,j) * ttmp0(j,iy);
-              }
-              t0 *= sphere_scale_factor_inv;
-              t1 *= sphere_scale_factor_inv;
-              const Scalar grad_tmp0 = dinv00 * t0 + dinv01 * t1;
-              const Scalar grad_tmp1 = dinv10 * t0 + dinv11 * t1;
+          for (int j = 0; j < NP; j++) {
+            t0 += sphere_dvv(iy,j) * ttmp0(ix,j);
+            t1 += sphere_dvv(ix,j) * ttmp0(j,iy);
+          }
+          t0 *= sphere_scale_factor_inv;
+          t1 *= sphere_scale_factor_inv;
+          const Scalar grad_tmp0 = dinv00 * t0 + dinv01 * t1;
+          const Scalar grad_tmp1 = dinv10 * t0 + dinv11 * t1;
 
-              Scalar tt = dvdp * ttmp0(ix,iy);
-              tt += grad_tmp0 * v0 + grad_tmp1 * v1;
-              buffers_theta_tens(ie,ix,iy,iz) = tt;
+          Scalar tt = dvdp * ttmp0(ix,iy);
+          tt += grad_tmp0 * v0 + grad_tmp1 * v1;
+          buffers_theta_tens(ie,ix,iy,iz) = tt;
 
-              buffers_dp_tens(ie,ix,iy,iz) = dvdp;
-            });
+          buffers_dp_tens(ie,ix,iy,iz) = dvdp;
         });
 
       // compute_scan_quantities
