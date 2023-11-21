@@ -366,6 +366,8 @@ struct CaarFunctorImpl {
     if ((true) && (m_rsplit > 0) && (!m_theta_hydrostatic_mode) && (m_theta_advection_form == AdvectionForm::NonConservative)) {
 
       static_assert(VECTOR_SIZE == 1, "VECTOR_SIZE != 1");
+      static_assert(NUM_LEV % WARP_SIZE == 0, "NUM_LEV not divisible by WARP_SIZE");
+      constexpr int WARPS_PER_COL = NUM_LEV / WARP_SIZE;
 
       using TeamPolicy = Kokkos::TeamPolicy<ExecSpace>;
       using Team = TeamPolicy::member_type;
@@ -535,70 +537,59 @@ struct CaarFunctorImpl {
       // compute_dp_and_theta_tens
       Kokkos::parallel_for(
         "caar compute dp_and_theta_tens",
-        TeamPolicy(m_num_elems, NPNP, WARP_SIZE).
-        set_scratch_size(0, Kokkos::PerTeam(2 * ScalarPerThread::shmem_size())),
+        TeamPolicy(m_num_elems * WARPS_PER_COL, NPNP * WARP_SIZE).
+        set_scratch_size(0, Kokkos::PerTeam(ScalarPerThread::shmem_size())),
         KOKKOS_LAMBDA(const Team &team) {
 
-          const int ie = team.league_rank();
+          const int lr = team.league_rank();
+          const int ie = lr / WARPS_PER_COL;
+          const int iw = lr % WARPS_PER_COL;
           const int tr = team.team_rank();
-          const int ix = tr / NP;
-          const int iy = tr % NP;
-
-          int dz = -1;
-          Kokkos::parallel_for(
-            Kokkos::ThreadVectorRange(team, WARP_SIZE),
-            [&](const int k) {
-              dz = k;
-            });
+          const int ixy = tr / WARP_SIZE;
+          const int ix = ixy / NP;
+          const int iy = ixy % NP;
+          const int dz = tr % WARP_SIZE;
+          const int iz = dz + iw * WARP_SIZE;
 
           ScalarPerThread ttmp00(team.team_scratch(0));
           auto ttmp0 = Kokkos::subview(ttmp00,dz,Kokkos::ALL,Kokkos::ALL);
 
-          ScalarPerThread ttmp10(team.team_scratch(0));
-          auto ttmp1 = Kokkos::subview(ttmp10,dz,Kokkos::ALL,Kokkos::ALL);
+          ttmp0(ix,iy) = 0.5 * (buffers_pi_i(ie,ix,iy,iz) + buffers_pi_i(ie,ix,iy,iz+1));
+
+          team.team_barrier();
+
+          Scalar d0 = 0;
+          Scalar d1 = 0;
+          for (int j = 0; j < NP; j++) {
+            d0 += sphere_dvv(iy,j) * ttmp0(ix,j);
+            d1 += sphere_dvv(ix,j) * ttmp0(j,iy);
+          }
+          d0 *= sphere_scale_factor_inv;
+          d1 *= sphere_scale_factor_inv;
 
           const Scalar dinv00 = sphere_dinv(ie,0,0,ix,iy);
           const Scalar dinv01 = sphere_dinv(ie,0,1,ix,iy);
           const Scalar dinv10 = sphere_dinv(ie,1,0,ix,iy);
           const Scalar dinv11 = sphere_dinv(ie,1,1,ix,iy);
 
-          Kokkos::parallel_for(
-            Kokkos::ThreadVectorRange(team, NUM_LEV),
-            [&](const int iz) {
-              team.team_barrier();
+          const Scalar grad_tmp0 = dinv00 * d0 + dinv01 * d1;
+          const Scalar grad_tmp1 = dinv10 * d0 + dinv11 * d1;
 
-              ttmp0(ix,iy) = 0.5 * (buffers_pi_i(ie,ix,iy,iz) + buffers_pi_i(ie,ix,iy,iz+1));
+          Scalar omega_p = state_v(ie,data_n0,0,ix,iy,iz) * grad_tmp0 + state_v(ie,data_n0,1,ix,iy,iz) * grad_tmp1;
+          omega_p -= 0.5 * (buffers_w_tens(ie,ix,iy,iz) + buffers_w_tens(ie,ix,iy,iz+1));
+          derived_omega_p(ie,ix,iy,iz) += data_eta_ave_w * omega_p;
 
-              team.team_barrier();
+          const Scalar dphi = state_phinh_i(ie,data_n0,ix,iy,iz+1) - state_phinh_i(ie,data_n0,ix,iy,iz);
+          if ((state_vtheta_dp(ie,data_n0,ix,iy,iz)[0] < 0) || (dphi[0] > 0)) abort();
 
-              Scalar d0 = 0;
-              Scalar d1 = 0;
-#pragma nounroll
-              for (int j = 0; j < NP; j++) {
-                d0 += sphere_dvv(iy,j) * ttmp0(ix,j);
-                d1 += sphere_dvv(ix,j) * ttmp0(j,iy);
-              }
-              d0 *= sphere_scale_factor_inv;
-              d1 *= sphere_scale_factor_inv;
-              const Scalar grad_tmp0 = dinv00 * d0 + dinv01 * d1;
-              const Scalar grad_tmp1 = dinv10 * d0 + dinv11 * d1;
+          Scalar exneriz = -PhysicalConstants::Rgas * state_vtheta_dp(ie,data_n0,ix,iy,iz) / dphi;
+          Scalar pnhiz = exneriz * divp0;
+          pnhiz = pow(pnhiz, div1mkappa);
+          pnhiz *= PhysicalConstants::p0;
+          exneriz = pnhiz / exneriz;
 
-              Scalar omega_p = state_v(ie,data_n0,0,ix,iy,iz) * grad_tmp0 + state_v(ie,data_n0,1,ix,iy,iz) * grad_tmp1;
-              omega_p -= 0.5 * (buffers_w_tens(ie,ix,iy,iz) + buffers_w_tens(ie,ix,iy,iz+1));
-              derived_omega_p(ie,ix,iy,iz) += data_eta_ave_w * omega_p;
-
-              const Scalar dphi = state_phinh_i(ie,data_n0,ix,iy,iz+1) - state_phinh_i(ie,data_n0,ix,iy,iz);
-              if ((state_vtheta_dp(ie,data_n0,ix,iy,iz)[0] < 0) || (dphi[0] > 0)) abort();
-
-              Scalar exneriz = -PhysicalConstants::Rgas * state_vtheta_dp(ie,data_n0,ix,iy,iz) / dphi;
-              Scalar pnhiz = exneriz * divp0;
-              pnhiz = pow(pnhiz, div1mkappa);
-              pnhiz *= PhysicalConstants::p0;
-              exneriz = pnhiz / exneriz;
-
-              buffers_pnh(ie,ix,iy,iz) = pnhiz;
-              buffers_exner(ie,ix,iy,iz) = exneriz;
-            });
+          buffers_pnh(ie,ix,iy,iz) = pnhiz;
+          buffers_exner(ie,ix,iy,iz) = exneriz;
         });
 
       // compute_interface_quantities
@@ -680,9 +671,6 @@ struct CaarFunctorImpl {
       // compute_v_tens
 
       const bool pgrad_correction = m_pgrad_correction;
-      static_assert(NUM_LEV % WARP_SIZE == 0, "NUM_LEV not divisible by WARP_SIZE");
-      constexpr int WARPS_PER_COL = NUM_LEV / WARP_SIZE;
-
       Kokkos::parallel_for(
         "caar compute v_tens",
         TeamPolicy(m_num_elems * WARPS_PER_COL, NPNP * WARP_SIZE).
