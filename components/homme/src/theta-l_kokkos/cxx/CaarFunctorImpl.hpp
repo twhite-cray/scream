@@ -425,7 +425,7 @@ struct CaarFunctorImpl {
       Kokkos::parallel_for(
         "caar compute div_vdp",
         TeamPolicy(m_num_elems * WARPS_PER_COL, NPNP * WARP_SIZE).
-        set_scratch_size(0, Kokkos::PerTeam(2 * ScalarPerThread::shmem_size())),
+        set_scratch_size(0, Kokkos::PerTeam(3 * ScalarPerThread::shmem_size())),
         KOKKOS_LAMBDA(const Team &team) {
 
           const int lr = team.league_rank();
@@ -444,6 +444,9 @@ struct CaarFunctorImpl {
           ScalarPerThread ttmp10(team.team_scratch(0));
           auto ttmp1 = Kokkos::subview(ttmp10,dz,Kokkos::ALL,Kokkos::ALL);
 
+          ScalarPerThread ttmp20(team.team_scratch(0));
+          auto ttmp2 = Kokkos::subview(ttmp20,dz,Kokkos::ALL,Kokkos::ALL);
+
           const Scalar dinv00 = sphere_dinv(ie,0,0,ix,iy);
           const Scalar dinv01 = sphere_dinv(ie,0,1,ix,iy);
           const Scalar dinv10 = sphere_dinv(ie,1,0,ix,iy);
@@ -459,44 +462,35 @@ struct CaarFunctorImpl {
           derived_vn0(ie,0,ix,iy,iz) += data_eta_ave_w * v0;
           derived_vn0(ie,1,ix,iy,iz) += data_eta_ave_w * v1;
 
-          team.team_barrier();
-
           ttmp0(ix,iy) = (dinv00 * v0 + dinv10 * v1) * metdet;
           ttmp1(ix,iy) = (dinv01 * v0 + dinv11 * v1) * metdet;
+
+          const Scalar vtheta = state_vtheta_dp(ie,data_n0,ix,iy,iz) / dp3d;
+          ttmp2(ix,iy) = vtheta;
 
           team.team_barrier();
 
           Scalar duv = 0;
-#pragma nounroll
           for (int j = 0; j < NP; j++) {
             duv += sphere_dvv(iy,j) * ttmp0(ix,j) + sphere_dvv(ix,j) * ttmp1(j,iy);
           }
           const Scalar dvdp = duv * rrdmd;
+          buffers_dp_tens(ie,ix,iy,iz) = dvdp;
 
-          team.team_barrier();
-
-          const Scalar vtheta = state_vtheta_dp(ie,data_n0,ix,iy,iz) / dp3d;
-          ttmp0(ix,iy) = vtheta;
-
-          team.team_barrier();
-
+          Scalar tt = dvdp * vtheta;
           Scalar t0 = 0;
           Scalar t1 = 0;
-#pragma nounroll
           for (int j = 0; j < NP; j++) {
-            t0 += sphere_dvv(iy,j) * ttmp0(ix,j);
-            t1 += sphere_dvv(ix,j) * ttmp0(j,iy);
+            t0 += sphere_dvv(iy,j) * ttmp2(ix,j);
+            t1 += sphere_dvv(ix,j) * ttmp2(j,iy);
           }
           t0 *= sphere_scale_factor_inv;
           t1 *= sphere_scale_factor_inv;
           const Scalar grad_tmp0 = dinv00 * t0 + dinv01 * t1;
           const Scalar grad_tmp1 = dinv10 * t0 + dinv11 * t1;
 
-          Scalar tt = dvdp * ttmp0(ix,iy);
           tt += grad_tmp0 * v0 + grad_tmp1 * v1;
           buffers_theta_tens(ie,ix,iy,iz) = tt;
-
-          buffers_dp_tens(ie,ix,iy,iz) = dvdp;
         });
 
       // compute_scan_quantities
