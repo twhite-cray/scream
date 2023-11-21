@@ -370,6 +370,7 @@ struct CaarFunctorImpl {
       using TeamPolicy = Kokkos::TeamPolicy<ExecSpace>;
       using Team = TeamPolicy::member_type;
 
+      auto &buffers_pi_i = m_buffers.dp_i;
       auto &buffers_dp_tens = m_buffers.dp_tens;
       auto &buffers_dpnh_dp_i = m_buffers.dpnh_dp_i;
       auto &buffers_exner = m_buffers.exner;
@@ -419,29 +420,16 @@ struct CaarFunctorImpl {
       const Real scale1_dt = m_data.scale1 * m_data.dt;
 
       // compute_div_vdp
-      // compute_scan_quantities
-      // compute_dp_and_theta_tens
       Kokkos::parallel_for(
-        "caar compute div_vdp scan_quantities dp_and_theta_tens",
+        "caar compute div_vdp",
         TeamPolicy(m_num_elems, NPNP, WARP_SIZE).
-        set_scratch_size(0, Kokkos::PerTeam(2 * ScalarPerThread::shmem_size() + 2 * ScalarPerPoint::shmem_size())),
+        set_scratch_size(0, Kokkos::PerTeam(2 * ScalarPerThread::shmem_size())),
         KOKKOS_LAMBDA(const Team &team) {
 
           const int ie = team.league_rank();
           const int tr = team.team_rank();
           const int ix = tr / NP;
           const int iy = tr % NP;
-
-          ScalarPerPoint ptmp0(team.team_scratch(0));
-          auto pi_i = Kokkos::subview(ptmp0,ix,iy,Kokkos::ALL);
-
-          Kokkos::parallel_scan(
-            Kokkos::ThreadVectorRange(team, NUM_LEV),
-            [&](const int iz, Scalar &sum, const bool last) {
-              if (iz == 0) pi_i[0] = sum = pi_i00;
-              sum += state_dp3d(ie,data_n0,ix,iy,iz);
-              if (last) pi_i[iz+1] = sum;
-            });
 
           int dz = -1;
           Kokkos::parallel_for(
@@ -514,24 +502,72 @@ struct CaarFunctorImpl {
 
               buffers_dp_tens(ie,ix,iy,iz) = dvdp;
             });
+        });
 
-          ScalarPerPoint ptmp1(team.team_scratch(0));
-          auto omega_i = Kokkos::subview(ptmp1,ix,iy,Kokkos::ALL);
+      // compute_scan_quantities
+      Kokkos::parallel_for(
+        "caar compute scan_quantities",
+        TeamPolicy(m_num_elems, NPNP, WARP_SIZE),
+        KOKKOS_LAMBDA(const Team &team) {
+
+          const int ie = team.league_rank();
+          const int tr = team.team_rank();
+          const int ix = tr / NP;
+          const int iy = tr % NP;
 
           Kokkos::parallel_scan(
             Kokkos::ThreadVectorRange(team, NUM_LEV),
             [&](const int iz, Scalar &sum, const bool last) {
-              if (iz == 0) omega_i[0] = sum = 0;
-              sum += buffers_dp_tens(ie,ix,iy,iz);
-              if (last) omega_i[iz+1] = sum;
+              if (iz == 0) buffers_pi_i(ie,ix,iy,0) = sum = pi_i00;
+              sum += state_dp3d(ie,data_n0,ix,iy,iz);
+              if (last) buffers_pi_i(ie,ix,iy,iz+1) = sum;
             });
+
+          Kokkos::parallel_scan(
+            Kokkos::ThreadVectorRange(team, NUM_LEV),
+            [&](const int iz, Scalar &sum, const bool last) {
+              if (iz == 0) buffers_w_tens(ie,ix,iy,0) = sum = 0;
+              sum += buffers_dp_tens(ie,ix,iy,iz);
+              if (last) buffers_w_tens(ie,ix,iy,iz+1) = sum;
+            });
+        });
+
+      // compute_dp_and_theta_tens
+      Kokkos::parallel_for(
+        "caar compute dp_and_theta_tens",
+        TeamPolicy(m_num_elems, NPNP, WARP_SIZE).
+        set_scratch_size(0, Kokkos::PerTeam(2 * ScalarPerThread::shmem_size())),
+        KOKKOS_LAMBDA(const Team &team) {
+
+          const int ie = team.league_rank();
+          const int tr = team.team_rank();
+          const int ix = tr / NP;
+          const int iy = tr % NP;
+
+          int dz = -1;
+          Kokkos::parallel_for(
+            Kokkos::ThreadVectorRange(team, WARP_SIZE),
+            [&](const int k) {
+              dz = k;
+            });
+
+          ScalarPerThread ttmp00(team.team_scratch(0));
+          auto ttmp0 = Kokkos::subview(ttmp00,dz,Kokkos::ALL,Kokkos::ALL);
+
+          ScalarPerThread ttmp10(team.team_scratch(0));
+          auto ttmp1 = Kokkos::subview(ttmp10,dz,Kokkos::ALL,Kokkos::ALL);
+
+          const Scalar dinv00 = sphere_dinv(ie,0,0,ix,iy);
+          const Scalar dinv01 = sphere_dinv(ie,0,1,ix,iy);
+          const Scalar dinv10 = sphere_dinv(ie,1,0,ix,iy);
+          const Scalar dinv11 = sphere_dinv(ie,1,1,ix,iy);
 
           Kokkos::parallel_for(
             Kokkos::ThreadVectorRange(team, NUM_LEV),
             [&](const int iz) {
               team.team_barrier();
 
-              ttmp0(ix,iy) = 0.5 * (pi_i[iz] + pi_i[iz+1]);
+              ttmp0(ix,iy) = 0.5 * (buffers_pi_i(ie,ix,iy,iz) + buffers_pi_i(ie,ix,iy,iz+1));
 
               team.team_barrier();
 
@@ -548,7 +584,7 @@ struct CaarFunctorImpl {
               const Scalar grad_tmp1 = dinv10 * d0 + dinv11 * d1;
 
               Scalar omega_p = state_v(ie,data_n0,0,ix,iy,iz) * grad_tmp0 + state_v(ie,data_n0,1,ix,iy,iz) * grad_tmp1;
-              omega_p -= 0.5 * (omega_i[iz] + omega_i[iz+1]);
+              omega_p -= 0.5 * (buffers_w_tens(ie,ix,iy,iz) + buffers_w_tens(ie,ix,iy,iz+1));
               derived_omega_p(ie,ix,iy,iz) += data_eta_ave_w * omega_p;
 
               const Scalar dphi = state_phinh_i(ie,data_n0,ix,iy,iz+1) - state_phinh_i(ie,data_n0,ix,iy,iz);
