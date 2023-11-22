@@ -34,6 +34,24 @@
 
 namespace Homme {
 
+using TeamPolicy = Kokkos::TeamPolicy<ExecSpace>;
+using Team = TeamPolicy::member_type;
+
+static constexpr int NPNP = NP * NP;
+static constexpr int WARP_SIZE = warpSize;
+static_assert(NUM_LEV % WARP_SIZE == 0, "NUM_LEV not divisible by WARP_SIZE");
+
+static constexpr int SPHERE_TEAM_LEV = WARP_SIZE;
+static_assert(NUM_LEV % SPHERE_TEAM_LEV == 0, "NUM_LEV not divisible by WARP_SIZE");
+static constexpr int SPHERE_TEAMS_PER_COL = NUM_LEV / SPHERE_TEAM_LEV;
+static constexpr int SPHERE_TEAM = NPNP * SPHERE_TEAM_LEV;
+
+using SphereScratch = Kokkos::View<
+  Scalar[SPHERE_TEAM_LEV][NP][NP],
+  ExecSpace::scratch_memory_space,
+  Kokkos::MemoryTraits<Kokkos::Unmanaged>
+    >;
+
 struct SphereGlobal {
 
   const ExecViewManaged<const Real *[2][2][NP][NP]> d;
@@ -139,21 +157,6 @@ struct CaarFunctorImpl {
   TeamUtils<ExecSpace> m_tu;
 
   Kokkos::Array<std::shared_ptr<BoundaryExchange>, NUM_TIME_LEVELS> m_bes;
-
-  static constexpr int NPNP = NP * NP;
-  static constexpr int WARP_SIZE = warpSize;
-
-  using ScalarPerThread = Kokkos::View<
-    Scalar[WARP_SIZE][NP][NP],
-    ExecSpace::scratch_memory_space,
-    Kokkos::MemoryTraits<Kokkos::Unmanaged>
-      >;
-
-  using ScalarPerPoint = Kokkos::View<
-    Scalar[NP][NP][NUM_LEV_P],
-    ExecSpace::scratch_memory_space,
-    Kokkos::MemoryTraits<Kokkos::Unmanaged>
-      >;
 
   CaarFunctorImpl(const Elements &elements, const Tracers &/* tracers */,
                   const ReferenceElement &ref_FE, const HybridVCoord &hvcoord,
@@ -383,12 +386,6 @@ struct CaarFunctorImpl {
     if ((true) && (m_rsplit > 0) && (!m_theta_hydrostatic_mode) && (m_theta_advection_form == AdvectionForm::NonConservative)) {
 
       static_assert(VECTOR_SIZE == 1, "VECTOR_SIZE != 1");
-      static_assert(NUM_LEV % WARP_SIZE == 0, "NUM_LEV not divisible by WARP_SIZE");
-      constexpr int WARPS_PER_COL = NUM_LEV / WARP_SIZE;
-
-      using TeamPolicy = Kokkos::TeamPolicy<ExecSpace>;
-      using Team = TeamPolicy::member_type;
-
       auto &buffers_pi_i = m_buffers.dp_i;
       auto &buffers_dp_tens = m_buffers.dp_tens;
       auto &buffers_dpnh_dp_i = m_buffers.dpnh_dp_i;
@@ -418,11 +415,6 @@ struct CaarFunctorImpl {
       auto &geometry_gradphis = m_geometry.m_gradphis;
       auto &geometry_spheremp = m_geometry.m_spheremp;
 
-      auto &sphere_d = m_sphere_ops.m_d;
-      auto &sphere_dinv = m_sphere_ops.m_dinv;
-      auto &sphere_dvv = m_sphere_ops.dvv;
-      auto &sphere_metdet = m_sphere_ops.m_metdet;
-      const Real sphere_scale_factor_inv = m_sphere_ops.m_scale_factor_inv;
       const SphereGlobal sg(m_sphere_ops);
 
       auto &state_dp3d = m_state.m_dp3d;
@@ -442,27 +434,27 @@ struct CaarFunctorImpl {
       // compute_div_vdp
       Kokkos::parallel_for(
         "caar compute div_vdp",
-        TeamPolicy(m_num_elems * WARPS_PER_COL, NPNP * WARP_SIZE).
-        set_scratch_size(0, Kokkos::PerTeam(3 * ScalarPerThread::shmem_size())),
+        TeamPolicy(m_num_elems * SPHERE_TEAMS_PER_COL, SPHERE_TEAM).
+        set_scratch_size(0, Kokkos::PerTeam(3 * SphereScratch::shmem_size())),
         KOKKOS_LAMBDA(const Team &team) {
 
           const int lr = team.league_rank();
-          const int ie = lr / WARPS_PER_COL;
-          const int iw = lr % WARPS_PER_COL;
+          const int ie = lr / SPHERE_TEAMS_PER_COL;
+          const int iw = lr % SPHERE_TEAMS_PER_COL;
           const int tr = team.team_rank();
-          const int ixy = tr / WARP_SIZE;
+          const int ixy = tr / SPHERE_TEAM_LEV;
           const int ix = ixy / NP;
           const int iy = ixy % NP;
-          const int dz = tr % WARP_SIZE;
-          const int iz = dz + iw * WARP_SIZE;
+          const int dz = tr % SPHERE_TEAM_LEV;
+          const int iz = dz + iw * SPHERE_TEAM_LEV;
 
-          ScalarPerThread ttmp00(team.team_scratch(0));
+          SphereScratch ttmp00(team.team_scratch(0));
           auto ttmp0 = Kokkos::subview(ttmp00,dz,Kokkos::ALL,Kokkos::ALL);
 
-          ScalarPerThread ttmp10(team.team_scratch(0));
+          SphereScratch ttmp10(team.team_scratch(0));
           auto ttmp1 = Kokkos::subview(ttmp10,dz,Kokkos::ALL,Kokkos::ALL);
 
-          ScalarPerThread ttmp20(team.team_scratch(0));
+          SphereScratch ttmp20(team.team_scratch(0));
           auto ttmp2 = Kokkos::subview(ttmp20,dz,Kokkos::ALL,Kokkos::ALL);
 
           const Scalar v0 = state_v(ie,data_n0,0,ix,iy,iz) * state_dp3d(ie,data_n0,ix,iy,iz);
@@ -534,21 +526,21 @@ struct CaarFunctorImpl {
       // compute_dp_and_theta_tens
       Kokkos::parallel_for(
         "caar compute dp_and_theta_tens",
-        TeamPolicy(m_num_elems * WARPS_PER_COL, NPNP * WARP_SIZE).
-        set_scratch_size(0, Kokkos::PerTeam(ScalarPerThread::shmem_size())),
+        TeamPolicy(m_num_elems * SPHERE_TEAMS_PER_COL, SPHERE_TEAM).
+        set_scratch_size(0, Kokkos::PerTeam(SphereScratch::shmem_size())),
         KOKKOS_LAMBDA(const Team &team) {
 
           const int lr = team.league_rank();
-          const int ie = lr / WARPS_PER_COL;
-          const int iw = lr % WARPS_PER_COL;
+          const int ie = lr / SPHERE_TEAMS_PER_COL;
+          const int iw = lr % SPHERE_TEAMS_PER_COL;
           const int tr = team.team_rank();
-          const int ixy = tr / WARP_SIZE;
+          const int ixy = tr / SPHERE_TEAM_LEV;
           const int ix = ixy / NP;
           const int iy = ixy % NP;
-          const int dz = tr % WARP_SIZE;
-          const int iz = dz + iw * WARP_SIZE;
+          const int dz = tr % SPHERE_TEAM_LEV;
+          const int iz = dz + iw * SPHERE_TEAM_LEV;
 
-          ScalarPerThread ttmp00(team.team_scratch(0));
+          SphereScratch ttmp00(team.team_scratch(0));
           auto ttmp0 = Kokkos::subview(ttmp00,dz,Kokkos::ALL,Kokkos::ALL);
 
           ttmp0(ix,iy) = 0.5 * (buffers_pi_i(ie,ix,iy,iz) + buffers_pi_i(ie,ix,iy,iz+1));
@@ -667,36 +659,36 @@ struct CaarFunctorImpl {
       const bool pgrad_correction = m_pgrad_correction;
       Kokkos::parallel_for(
         "caar compute v_tens",
-        TeamPolicy(m_num_elems * WARPS_PER_COL, NPNP * WARP_SIZE).
-        set_scratch_size(0, Kokkos::PerTeam(6 * ScalarPerThread::shmem_size())),
+        TeamPolicy(m_num_elems * SPHERE_TEAMS_PER_COL, SPHERE_TEAM).
+        set_scratch_size(0, Kokkos::PerTeam(6 * SphereScratch::shmem_size())),
         KOKKOS_LAMBDA(const Team &team) {
 
           const int lr = team.league_rank();
-          const int ie = lr / WARPS_PER_COL;
-          const int iw = lr % WARPS_PER_COL;
+          const int ie = lr / SPHERE_TEAMS_PER_COL;
+          const int iw = lr % SPHERE_TEAMS_PER_COL;
           const int tr = team.team_rank();
-          const int ixy = tr / WARP_SIZE;
+          const int ixy = tr / SPHERE_TEAM_LEV;
           const int ix = ixy / NP;
           const int iy = ixy % NP;
-          const int dz = tr % WARP_SIZE;
-          const int iz = dz + iw * WARP_SIZE;
+          const int dz = tr % SPHERE_TEAM_LEV;
+          const int iz = dz + iw * SPHERE_TEAM_LEV;
 
-          ScalarPerThread ttmp00(team.team_scratch(0));
+          SphereScratch ttmp00(team.team_scratch(0));
           auto ttmp0 = Kokkos::subview(ttmp00,dz,Kokkos::ALL,Kokkos::ALL);
 
-          ScalarPerThread ttmp10(team.team_scratch(0));
+          SphereScratch ttmp10(team.team_scratch(0));
           auto ttmp1 = Kokkos::subview(ttmp10,dz,Kokkos::ALL,Kokkos::ALL);
 
-          ScalarPerThread ttmp20(team.team_scratch(0));
+          SphereScratch ttmp20(team.team_scratch(0));
           auto ttmp2 = Kokkos::subview(ttmp20,dz,Kokkos::ALL,Kokkos::ALL);
 
-          ScalarPerThread ttmp30(team.team_scratch(0));
+          SphereScratch ttmp30(team.team_scratch(0));
           auto ttmp3 = Kokkos::subview(ttmp30,dz,Kokkos::ALL,Kokkos::ALL);
 
-          ScalarPerThread ttmp40(team.team_scratch(0));
+          SphereScratch ttmp40(team.team_scratch(0));
           auto ttmp4 = Kokkos::subview(ttmp40,dz,Kokkos::ALL,Kokkos::ALL);
 
-          ScalarPerThread ttmp50(team.team_scratch(0));
+          SphereScratch ttmp50(team.team_scratch(0));
           auto ttmp5 = Kokkos::subview(ttmp50,dz,Kokkos::ALL,Kokkos::ALL);
 
           ttmp0(ix,iy) = 0.25 * (state_w_i(ie,data_n0,ix,iy,iz) * state_w_i(ie,data_n0,ix,iy,iz) + state_w_i(ie,data_n0,ix,iy,iz+1) * state_w_i(ie,data_n0,ix,iy,iz+1));
