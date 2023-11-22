@@ -606,19 +606,24 @@ struct CaarFunctorImpl {
 
           Scalar p0 = 0;
           Scalar p1 = 0;
-          Scalar w0 = 0;
-          Scalar w1 = 0;
-#pragma nounroll
           for (int j = 0; j < NP; j++) {
             p0 += sphere_dvv(iy,j) * state_phinh_i(ie,data_n0,ix,j,iz);
-            w0 += sphere_dvv(iy,j) * state_w_i(ie,data_n0,ix,j,iz);
             p1 += sphere_dvv(ix,j) * state_phinh_i(ie,data_n0,j,iy,iz);
-            w1 += sphere_dvv(ix,j) * state_w_i(ie,data_n0,j,iy,iz);
           }
           p0 *= sphere_scale_factor_inv;
           p1 *= sphere_scale_factor_inv;
+
+          Scalar w0 = 0;
+          Scalar w1 = 0;
+          for (int j = 0; j < NP; j++) {
+            w0 += sphere_dvv(iy,j) * state_w_i(ie,data_n0,ix,j,iz);
+            w1 += sphere_dvv(ix,j) * state_w_i(ie,data_n0,j,iy,iz);
+          }
           w0 *= sphere_scale_factor_inv;
           w1 *= sphere_scale_factor_inv;
+
+          const Scalar grad_w_i0 = sphere_dinv(ie,0,0,ix,iy) * w0 + sphere_dinv(ie,0,1,ix,iy) * w1;
+          const Scalar grad_w_i1 = sphere_dinv(ie,1,0,ix,iy) * w0 + sphere_dinv(ie,1,1,ix,iy) * w1;
 
           const Scalar dm = (iz > 0) ? state_dp3d(ie,data_n0,ix,iy,iz-1) : 0;
           const Scalar dz = (iz < NUM_LEV) ? state_dp3d(ie,data_n0,ix,iy,iz) : 0;
@@ -631,9 +636,6 @@ struct CaarFunctorImpl {
           const Scalar v1m = (iz > 0) ? state_v(ie,data_n0,1,ix,iy,iz-1) : 0;
           const Scalar v1z = (iz < NUM_LEV) ? state_v(ie,data_n0,1,ix,iy,iz) : 0;
           const Scalar v_i1 = (dz * v1z + dm * v1m) * denom;
-
-          const Scalar grad_w_i0 = sphere_dinv(ie,0,0,ix,iy) * w0 + sphere_dinv(ie,0,1,ix,iy) * w1;
-          const Scalar grad_w_i1 = sphere_dinv(ie,1,0,ix,iy) * w0 + sphere_dinv(ie,1,1,ix,iy) * w1;
 
           Scalar wt = v_i0 * grad_w_i0 + v_i1 * grad_w_i1;
           wt *= -data_scale1;
