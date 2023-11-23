@@ -101,6 +101,31 @@ struct SphereElem {
     x = tr / NP;
     y = tr % NP;
   }
+
+  template <typename OutView, typename InView>
+  KOKKOS_INLINE_FUNCTION void scan(OutView &out, const InView &in, const Real zero) const {
+
+    Kokkos::parallel_scan(
+      Kokkos::ThreadVectorRange(t, NUM_LEV),
+      [&](const int z, Scalar &sum, const bool last) {
+        if (z == 0) out(e,x,y,0) = sum = zero;
+        sum += in(e,x,y,z);
+        if (last) out(e,x,y,z+1) = sum;
+      });
+  }
+
+  template <typename OutView, typename InView>
+  KOKKOS_INLINE_FUNCTION void scan(OutView &out, const InView &in, const int n, const Real zero) const {
+
+    Kokkos::parallel_scan(
+      Kokkos::ThreadVectorRange(t, NUM_LEV),
+      [&](const int z, Scalar &sum, const bool last) {
+        if (z == 0) out(e,x,y,0) = sum = zero;
+        sum += in(e,n,x,y,z);
+        if (last) out(e,x,y,z+1) = sum;
+      });
+  }
+
 };
 
 struct SphereGlobal {
@@ -544,24 +569,9 @@ struct CaarFunctorImpl {
         "caar compute scan_quantities",
         TeamPolicy(m_num_elems, NPNP, WARP_SIZE),
         KOKKOS_LAMBDA(const Team &team) {
-
           const SphereElem e(team);
-
-          Kokkos::parallel_scan(
-            Kokkos::ThreadVectorRange(team, NUM_LEV),
-            [&](const int z, Scalar &sum, const bool last) {
-              if (z == 0) buffers_pi_i(e.e,e.x,e.y,0) = sum = pi_i00;
-              sum += state_dp3d(e.e,data_n0,e.x,e.y,z);
-              if (last) buffers_pi_i(e.e,e.x,e.y,z+1) = sum;
-            });
-
-          Kokkos::parallel_scan(
-            Kokkos::ThreadVectorRange(team, NUM_LEV),
-            [&](const int z, Scalar &sum, const bool last) {
-              if (z == 0) buffers_w_tens(e.e,e.x,e.y,0) = sum = 0;
-              sum += buffers_dp_tens(e.e,e.x,e.y,z);
-              if (last) buffers_w_tens(e.e,e.x,e.y,z+1) = sum;
-            });
+          e.scan(buffers_pi_i, state_dp3d, data_n0, pi_i00);
+          e.scan(buffers_w_tens, buffers_dp_tens, 0);
         });
 
       // compute_dp_and_theta_tens
