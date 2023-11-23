@@ -52,25 +52,6 @@ using SphereScratch = Kokkos::View<
   Kokkos::MemoryTraits<Kokkos::Unmanaged>
     >;
 
-struct SphereBlock;
-
-struct SphereGlobal {
-
-  const ExecViewManaged<const Real *[2][2][NP][NP]> d;
-  const ExecViewManaged<const Real *[2][2][NP][NP]> dinv;
-  const ExecViewManaged<const Real [NP][NP]> dvv;
-  const ExecViewManaged<const Real *[NP][NP]> metdet;
-  const Scalar scale_factor_inv;
-
-  SphereGlobal(const SphereOperators &that):
-    d(that.m_d),
-    dinv(that.m_dinv),
-    dvv(that.dvv),
-    metdet(that.m_metdet),
-    scale_factor_inv(that.m_scale_factor_inv)
-  {}
-};
-
 struct SphereBlock {
   const Team &t;
   int e,x,y,z;
@@ -90,6 +71,53 @@ struct SphereBlock {
   }
 
   KOKKOS_INLINE_FUNCTION void barrier() const { t.team_barrier(); }
+};
+
+struct SphereCol {
+  const Team &t;
+  int e,x,y,z;
+
+  KOKKOS_INLINE_FUNCTION SphereCol(const Team &that):
+    t(that)
+  {
+    const int lr = t.league_rank();
+    e = lr / NPNP;
+    const int xy = lr % NPNP;
+    x = xy / NP;
+    y = xy % NP;
+    z = t.team_rank();
+  }
+};
+
+struct SphereElem {
+  const Team &t;
+  int e,x,y;
+
+  KOKKOS_INLINE_FUNCTION SphereElem(const Team &that):
+    t(that)
+  {
+    e = t.league_rank();
+    const int tr = t.team_rank();
+    x = tr / NP;
+    y = tr % NP;
+  }
+};
+
+struct SphereGlobal {
+
+  const ExecViewManaged<const Real *[2][2][NP][NP]> d;
+  const ExecViewManaged<const Real *[2][2][NP][NP]> dinv;
+  const ExecViewManaged<const Real [NP][NP]> dvv;
+  const ExecViewManaged<const Real *[NP][NP]> metdet;
+  const Scalar scale_factor_inv;
+
+  SphereGlobal(const SphereOperators &that):
+    d(that.m_d),
+    dinv(that.m_dinv),
+    dvv(that.dvv),
+    metdet(that.m_metdet),
+    scale_factor_inv(that.m_scale_factor_inv)
+  {}
 };
 
 // Theta does not use tracers in caar. A fwd decl is enough here
@@ -517,25 +545,22 @@ struct CaarFunctorImpl {
         TeamPolicy(m_num_elems, NPNP, WARP_SIZE),
         KOKKOS_LAMBDA(const Team &team) {
 
-          const int ie = team.league_rank();
-          const int tr = team.team_rank();
-          const int ix = tr / NP;
-          const int iy = tr % NP;
+          const SphereElem e(team);
 
           Kokkos::parallel_scan(
             Kokkos::ThreadVectorRange(team, NUM_LEV),
-            [&](const int iz, Scalar &sum, const bool last) {
-              if (iz == 0) buffers_pi_i(ie,ix,iy,0) = sum = pi_i00;
-              sum += state_dp3d(ie,data_n0,ix,iy,iz);
-              if (last) buffers_pi_i(ie,ix,iy,iz+1) = sum;
+            [&](const int z, Scalar &sum, const bool last) {
+              if (z == 0) buffers_pi_i(e.e,e.x,e.y,0) = sum = pi_i00;
+              sum += state_dp3d(e.e,data_n0,e.x,e.y,z);
+              if (last) buffers_pi_i(e.e,e.x,e.y,z+1) = sum;
             });
 
           Kokkos::parallel_scan(
             Kokkos::ThreadVectorRange(team, NUM_LEV),
-            [&](const int iz, Scalar &sum, const bool last) {
-              if (iz == 0) buffers_w_tens(ie,ix,iy,0) = sum = 0;
-              sum += buffers_dp_tens(ie,ix,iy,iz);
-              if (last) buffers_w_tens(ie,ix,iy,iz+1) = sum;
+            [&](const int z, Scalar &sum, const bool last) {
+              if (z == 0) buffers_w_tens(e.e,e.x,e.y,0) = sum = 0;
+              sum += buffers_dp_tens(e.e,e.x,e.y,z);
+              if (last) buffers_w_tens(e.e,e.x,e.y,z+1) = sum;
             });
         });
 
@@ -592,29 +617,24 @@ struct CaarFunctorImpl {
         TeamPolicy(m_num_elems * NPNP, NUM_LEV_P),
         KOKKOS_LAMBDA(const Team &team) {
 
-          const int lr = team.league_rank();
-          const int ie = lr / NPNP;
-          const int ixy = lr % NPNP;
-          const int ix = ixy / NP;
-          const int iy = ixy % NP;
-          const int iz = team.team_rank();
+          const SphereCol c(team);
 
           Scalar a0 = 0;
           Scalar a1 = 0;
           for (int j = 0; j < NP; j++) {
-            a0 += sg.dvv(iy,j) * state_w_i(ie,data_n0,ix,j,iz); 
-            a1 += sg.dvv(ix,j) * state_w_i(ie,data_n0,j,iy,iz);
+            a0 += sg.dvv(c.y,j) * state_w_i(c.e,data_n0,c.x,j,c.z); 
+            a1 += sg.dvv(c.x,j) * state_w_i(c.e,data_n0,j,c.y,c.z);
           }
           a0 *= sg.scale_factor_inv;
           a1 *= sg.scale_factor_inv;
-          buffers_v_i(ie,0,ix,iy,iz) = sg.dinv(ie,0,0,ix,iy) * a0 + sg.dinv(ie,0,1,ix,iy) * a1;
-          buffers_v_i(ie,1,ix,iy,iz) = sg.dinv(ie,1,0,ix,iy) * a0 + sg.dinv(ie,1,1,ix,iy) * a1;
+          buffers_v_i(c.e,0,c.x,c.y,c.z) = sg.dinv(c.e,0,0,c.x,c.y) * a0 + sg.dinv(c.e,0,1,c.x,c.y) * a1;
+          buffers_v_i(c.e,1,c.x,c.y,c.z) = sg.dinv(c.e,1,0,c.x,c.y) * a0 + sg.dinv(c.e,1,1,c.x,c.y) * a1;
 
           Scalar p0 = 0;
           Scalar p1 = 0;
           for (int j = 0; j < NP; j++) {
-            p0 += sg.dvv(iy,j) * state_phinh_i(ie,data_n0,ix,j,iz);
-            p1 += sg.dvv(ix,j) * state_phinh_i(ie,data_n0,j,iy,iz);
+            p0 += sg.dvv(c.y,j) * state_phinh_i(c.e,data_n0,c.x,j,c.z);
+            p1 += sg.dvv(c.x,j) * state_phinh_i(c.e,data_n0,j,c.y,c.z);
           }
           p0 *= sg.scale_factor_inv;
           p1 *= sg.scale_factor_inv;
@@ -622,45 +642,45 @@ struct CaarFunctorImpl {
           Scalar w0 = 0;
           Scalar w1 = 0;
           for (int j = 0; j < NP; j++) {
-            w0 += sg.dvv(iy,j) * state_w_i(ie,data_n0,ix,j,iz);
-            w1 += sg.dvv(ix,j) * state_w_i(ie,data_n0,j,iy,iz);
+            w0 += sg.dvv(c.y,j) * state_w_i(c.e,data_n0,c.x,j,c.z);
+            w1 += sg.dvv(c.x,j) * state_w_i(c.e,data_n0,j,c.y,c.z);
           }
           w0 *= sg.scale_factor_inv;
           w1 *= sg.scale_factor_inv;
 
-          const Scalar grad_w_i0 = sg.dinv(ie,0,0,ix,iy) * w0 + sg.dinv(ie,0,1,ix,iy) * w1;
-          const Scalar grad_w_i1 = sg.dinv(ie,1,0,ix,iy) * w0 + sg.dinv(ie,1,1,ix,iy) * w1;
+          const Scalar grad_w_i0 = sg.dinv(c.e,0,0,c.x,c.y) * w0 + sg.dinv(c.e,0,1,c.x,c.y) * w1;
+          const Scalar grad_w_i1 = sg.dinv(c.e,1,0,c.x,c.y) * w0 + sg.dinv(c.e,1,1,c.x,c.y) * w1;
 
-          const Scalar dm = (iz > 0) ? state_dp3d(ie,data_n0,ix,iy,iz-1) : 0;
-          const Scalar dz = (iz < NUM_LEV) ? state_dp3d(ie,data_n0,ix,iy,iz) : 0;
+          const Scalar dm = (c.z > 0) ? state_dp3d(c.e,data_n0,c.x,c.y,c.z-1) : 0;
+          const Scalar dz = (c.z < NUM_LEV) ? state_dp3d(c.e,data_n0,c.x,c.y,c.z) : 0;
           const Scalar denom = 1.0 / (dz + dm);
 
-          const Scalar v0m = (iz > 0) ? state_v(ie,data_n0,0,ix,iy,iz-1) : 0;
-          const Scalar v0z = (iz < NUM_LEV) ? state_v(ie,data_n0,0,ix,iy,iz) : 0;
+          const Scalar v0m = (c.z > 0) ? state_v(c.e,data_n0,0,c.x,c.y,c.z-1) : 0;
+          const Scalar v0z = (c.z < NUM_LEV) ? state_v(c.e,data_n0,0,c.x,c.y,c.z) : 0;
           const Scalar v_i0 = (dz * v0z + dm * v0m) * denom;
 
-          const Scalar v1m = (iz > 0) ? state_v(ie,data_n0,1,ix,iy,iz-1) : 0;
-          const Scalar v1z = (iz < NUM_LEV) ? state_v(ie,data_n0,1,ix,iy,iz) : 0;
+          const Scalar v1m = (c.z > 0) ? state_v(c.e,data_n0,1,c.x,c.y,c.z-1) : 0;
+          const Scalar v1z = (c.z < NUM_LEV) ? state_v(c.e,data_n0,1,c.x,c.y,c.z) : 0;
           const Scalar v_i1 = (dz * v1z + dm * v1m) * denom;
 
           Scalar wt = v_i0 * grad_w_i0 + v_i1 * grad_w_i1;
           wt *= -data_scale1;
 
-          const Scalar pm = (iz > 0) ? buffers_pnh(ie,ix,iy,iz-1) : pi_i00;
-          const Scalar pz = (iz < NUM_LEV) ? buffers_pnh(ie,ix,iy,iz) : pm + 0.5 * dm;
-          buffers_dpnh_dp_i(ie,ix,iy,iz) = 2.0 * (pz - pm) * denom;
+          const Scalar pm = (c.z > 0) ? buffers_pnh(c.e,c.x,c.y,c.z-1) : pi_i00;
+          const Scalar pz = (c.z < NUM_LEV) ? buffers_pnh(c.e,c.x,c.y,c.z) : pm + 0.5 * dm;
+          buffers_dpnh_dp_i(c.e,c.x,c.y,c.z) = 2.0 * (pz - pm) * denom;
 
-          const Scalar scale = (iz == NUM_LEV) ? gscale1 : gscale2;
-          wt += (buffers_dpnh_dp_i(ie,ix,iy,iz) - 1.0) * scale;
-          buffers_w_tens(ie,ix,iy,iz) = wt;
+          const Scalar scale = (c.z == NUM_LEV) ? gscale1 : gscale2;
+          wt += (buffers_dpnh_dp_i(c.e,c.x,c.y,c.z) - 1.0) * scale;
+          buffers_w_tens(c.e,c.x,c.y,c.z) = wt;
 
-          buffers_grad_phinh_i(ie,0,ix,iy,iz) = sg.dinv(ie,0,0,ix,iy) * p0 + sg.dinv(ie,0,1,ix,iy) * p1;
-          buffers_grad_phinh_i(ie,1,ix,iy,iz) = sg.dinv(ie,1,0,ix,iy) * p0 + sg.dinv(ie,1,1,ix,iy) * p1;
-          Scalar pt = v_i0 * buffers_grad_phinh_i(ie,0,ix,iy,iz) + v_i1 * buffers_grad_phinh_i(ie,1,ix,iy,iz);
+          buffers_grad_phinh_i(c.e,0,c.x,c.y,c.z) = sg.dinv(c.e,0,0,c.x,c.y) * p0 + sg.dinv(c.e,0,1,c.x,c.y) * p1;
+          buffers_grad_phinh_i(c.e,1,c.x,c.y,c.z) = sg.dinv(c.e,1,0,c.x,c.y) * p0 + sg.dinv(c.e,1,1,c.x,c.y) * p1;
+          Scalar pt = v_i0 * buffers_grad_phinh_i(c.e,0,c.x,c.y,c.z) + v_i1 * buffers_grad_phinh_i(c.e,1,c.x,c.y,c.z);
           pt *= -data_scale1;
-          pt += state_w_i(ie,data_n0,ix,iy,iz) * gscale2;
-          pt += dscale * (v_i0 * geometry_gradphis(ie,0,ix,iy) + v_i1 * geometry_gradphis(ie,1,ix,iy)) * hvcoord_hybrid_bi_packed[iz];
-          buffers_phi_tens(ie,ix,iy,iz) = pt;
+          pt += state_w_i(c.e,data_n0,c.x,c.y,c.z) * gscale2;
+          pt += dscale * (v_i0 * geometry_gradphis(c.e,0,c.x,c.y) + v_i1 * geometry_gradphis(c.e,1,c.x,c.y)) * hvcoord_hybrid_bi_packed[c.z];
+          buffers_phi_tens(c.e,c.x,c.y,c.z) = pt;
         });
 
       // compute_v_tens
@@ -798,31 +818,26 @@ struct CaarFunctorImpl {
         TeamPolicy(m_num_elems * NPNP, NUM_LEV),
         KOKKOS_LAMBDA(const Team &team) {
 
-          const int lr = team.league_rank();
-          const int ie = lr / NPNP;
-          const int ixy = lr % NPNP;
-          const int ix = ixy / NP;
-          const int iy = ixy % NP;
-          const int iz = team.team_rank();
+          const SphereCol c(team);
 
-          const Scalar spheremp = geometry_spheremp(ie,ix,iy);
+          const Scalar spheremp = geometry_spheremp(c.e,c.x,c.y);
           const Scalar dt_spheremp = data_dt * spheremp;
           const Scalar scale3_spheremp = data_scale3 * spheremp;
 
-          state_w_i(ie,data_np1,ix,iy,iz) = state_w_i(ie,data_nm1,ix,iy,iz) * scale3_spheremp + buffers_w_tens(ie,ix,iy,iz) * dt_spheremp;
-          if (iz == 0) state_w_i(ie,data_np1,ix,iy,NUM_LEV) = state_w_i(ie,data_nm1,ix,iy,NUM_LEV) * scale3_spheremp + buffers_w_tens(ie,ix,iy,NUM_LEV) * dt_spheremp;
+          state_w_i(c.e,data_np1,c.x,c.y,c.z) = state_w_i(c.e,data_nm1,c.x,c.y,c.z) * scale3_spheremp + buffers_w_tens(c.e,c.x,c.y,c.z) * dt_spheremp;
+          if (c.z == 0) state_w_i(c.e,data_np1,c.x,c.y,NUM_LEV) = state_w_i(c.e,data_nm1,c.x,c.y,NUM_LEV) * scale3_spheremp + buffers_w_tens(c.e,c.x,c.y,NUM_LEV) * dt_spheremp;
 
-          state_phinh_i(ie,data_np1,ix,iy,iz) = state_phinh_i(ie,data_nm1,ix,iy,iz) * scale3_spheremp + buffers_phi_tens(ie,ix,iy,iz) * dt_spheremp;
+          state_phinh_i(c.e,data_np1,c.x,c.y,c.z) = state_phinh_i(c.e,data_nm1,c.x,c.y,c.z) * scale3_spheremp + buffers_phi_tens(c.e,c.x,c.y,c.z) * dt_spheremp;
 
           const Scalar scale1_dt_spheremp = scale1_dt * spheremp;
 
-          state_dp3d(ie,data_np1,ix,iy,iz) = scale3_spheremp * state_dp3d(ie,data_nm1,ix,iy,iz) - buffers_dp_tens(ie,ix,iy,iz) * scale1_dt_spheremp;
+          state_dp3d(c.e,data_np1,c.x,c.y,c.z) = scale3_spheremp * state_dp3d(c.e,data_nm1,c.x,c.y,c.z) - buffers_dp_tens(c.e,c.x,c.y,c.z) * scale1_dt_spheremp;
 
-          state_vtheta_dp(ie,data_np1,ix,iy,iz) = state_vtheta_dp(ie,data_nm1,ix,iy,iz) * scale3_spheremp - buffers_theta_tens(ie,ix,iy,iz) * scale1_dt_spheremp;
+          state_vtheta_dp(c.e,data_np1,c.x,c.y,c.z) = state_vtheta_dp(c.e,data_nm1,c.x,c.y,c.z) * scale3_spheremp - buffers_theta_tens(c.e,c.x,c.y,c.z) * scale1_dt_spheremp;
 
-          state_v(ie,data_np1,0,ix,iy,iz) = state_v(ie,data_nm1,0,ix,iy,iz) * scale3_spheremp - buffers_v_tens(ie,0,ix,iy,iz) * scale1_dt_spheremp;
+          state_v(c.e,data_np1,0,c.x,c.y,c.z) = state_v(c.e,data_nm1,0,c.x,c.y,c.z) * scale3_spheremp - buffers_v_tens(c.e,0,c.x,c.y,c.z) * scale1_dt_spheremp;
 
-          state_v(ie,data_np1,1,ix,iy,iz) = state_v(ie,data_nm1,1,ix,iy,iz) * scale3_spheremp - buffers_v_tens(ie,1,ix,iy,iz) * scale1_dt_spheremp;
+          state_v(c.e,data_np1,1,c.x,c.y,c.z) = state_v(c.e,data_nm1,1,c.x,c.y,c.z) * scale3_spheremp - buffers_v_tens(c.e,1,c.x,c.y,c.z) * scale1_dt_spheremp;
         });
 
     } else {
