@@ -46,6 +46,12 @@ static_assert(NUM_LEV % SPHERE_BLOCK_LEV == 0, "NUM_LEV not divisible by WARP_SI
 static constexpr int SPHERE_BLOCKS_PER_COL = NUM_LEV / SPHERE_BLOCK_LEV;
 static constexpr int SPHERE_BLOCK = NPNP * SPHERE_BLOCK_LEV;
 
+using SphereBlockScratchView = Kokkos::View<
+  Scalar[SPHERE_BLOCK_LEV][NP][NP],
+  ExecSpace::scratch_memory_space,
+  Kokkos::MemoryTraits<Kokkos::Unmanaged>
+    >;
+
 struct SphereBlock {
   const Team &t;
   int e,x,y,z;
@@ -64,14 +70,18 @@ struct SphereBlock {
     z = dz + iw * SPHERE_BLOCK_LEV;
   }
 
-  KOKKOS_INLINE_FUNCTION void barrier() const { t.team_barrier(); }
-};
+  KOKKOS_INLINE_FUNCTION void barrier() const
+  {
+    t.team_barrier();
+  }
 
-using SphereBlockScratchView = Kokkos::View<
-  Scalar[SPHERE_BLOCK_LEV][NP][NP],
-  ExecSpace::scratch_memory_space,
-  Kokkos::MemoryTraits<Kokkos::Unmanaged>
-    >;
+  static TeamPolicy policy(const int num_elems, const int num_scratch)
+  {
+    return TeamPolicy(num_elems * SPHERE_BLOCKS_PER_COL, SPHERE_BLOCK).
+      set_scratch_size(0, Kokkos::PerTeam(num_scratch * SphereBlockScratchView::shmem_size()));
+  }
+
+};
 
 using SphereBlockScratchSubview = Kokkos::Subview<
   SphereBlockScratchView, int,
@@ -86,7 +96,7 @@ struct SphereBlockScratch {
   KOKKOS_INLINE_FUNCTION SphereBlockScratch(const SphereBlock &b):
     v(b.t.team_scratch(0)),
     sv(Kokkos::subview(v, b.z % SPHERE_BLOCK_LEV, Kokkos::ALL, Kokkos::ALL))
-  { }
+  {}
 
   KOKKOS_INLINE_FUNCTION SphereBlockScratch(const SphereBlock &b, const Scalar val):
     v(b.t.team_scratch(0)),
@@ -96,10 +106,9 @@ struct SphereBlockScratch {
   }
 
   KOKKOS_INLINE_FUNCTION Scalar operator()(const int x, const int y) const
-  { return sv(x,y); }
-
-  static size_t shmem_size()
-  { return SphereBlockScratchView::shmem_size(); }
+  {
+    return sv(x,y);
+  }
 };
 
 struct SphereCol {
@@ -115,6 +124,11 @@ struct SphereCol {
     x = xy / NP;
     y = xy % NP;
     z = t.team_rank();
+  }
+
+  static TeamPolicy policy(const int num_elems, const int num_lev)
+  {
+    return TeamPolicy(num_elems * NPNP, num_lev);
   }
 };
 
@@ -155,6 +169,10 @@ struct SphereElem {
       });
   }
 
+  static TeamPolicy policy(const int num_elems)
+  {
+    return TeamPolicy(num_elems, NPNP, WARP_SIZE);
+  }
 };
 
 struct SphereGlobal {
@@ -599,8 +617,7 @@ struct CaarFunctorImpl {
       // compute_div_vdp
       Kokkos::parallel_for(
         "caar compute div_vdp",
-        TeamPolicy(m_num_elems * SPHERE_BLOCKS_PER_COL, SPHERE_BLOCK).
-        set_scratch_size(0, Kokkos::PerTeam(3 * SphereBlockScratch::shmem_size())),
+        SphereBlock::policy(m_num_elems, 3),
         KOKKOS_LAMBDA(const Team &team) {
 
           const SphereBlock b(team);
@@ -633,7 +650,7 @@ struct CaarFunctorImpl {
       // compute_scan_quantities
       Kokkos::parallel_for(
         "caar compute scan_quantities",
-        TeamPolicy(m_num_elems, NPNP, WARP_SIZE),
+        SphereElem::policy(m_num_elems),
         KOKKOS_LAMBDA(const Team &team) {
           const SphereElem e(team);
           e.scan(buffers_pi_i, state_dp3d, data_n0, pi_i00);
@@ -643,8 +660,7 @@ struct CaarFunctorImpl {
       // compute_dp_and_theta_tens
       Kokkos::parallel_for(
         "caar compute dp_and_theta_tens",
-        TeamPolicy(m_num_elems * SPHERE_BLOCKS_PER_COL, SPHERE_BLOCK).
-        set_scratch_size(0, Kokkos::PerTeam(SphereBlockScratch::shmem_size())),
+        SphereBlock::policy(m_num_elems, 1),
         KOKKOS_LAMBDA(const Team &team) {
 
           const SphereBlock b(team);
@@ -676,7 +692,7 @@ struct CaarFunctorImpl {
       // compute_w_and_phi_tens
       Kokkos::parallel_for(
         "caar compute interface_quantities w_and_phi_tens",
-        TeamPolicy(m_num_elems * NPNP, NUM_LEV_P),
+        SphereCol::policy(m_num_elems, NUM_LEV_P),
         KOKKOS_LAMBDA(const Team &team) {
 
           const SphereCol c(team);
@@ -719,8 +735,7 @@ struct CaarFunctorImpl {
       const bool pgrad_correction = m_pgrad_correction;
       Kokkos::parallel_for(
         "caar compute v_tens",
-        TeamPolicy(m_num_elems * SPHERE_BLOCKS_PER_COL, SPHERE_BLOCK).
-        set_scratch_size(0, Kokkos::PerTeam(6 * SphereBlockScratch::shmem_size())),
+        SphereBlock::policy(m_num_elems, 6),
         KOKKOS_LAMBDA(const Team &team) {
 
           const SphereBlock b(team);
@@ -797,7 +812,7 @@ struct CaarFunctorImpl {
       // np1
       Kokkos::parallel_for(
         "caar compute np1",
-        TeamPolicy(m_num_elems * NPNP, NUM_LEV),
+        SphereCol::policy(m_num_elems, NUM_LEV),
         KOKKOS_LAMBDA(const Team &team) {
 
           const SphereCol c(team);
