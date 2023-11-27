@@ -173,6 +173,16 @@ struct SphereGlobal {
     scale_factor_inv(that.m_scale_factor_inv)
   {}
 
+  KOKKOS_INLINE_FUNCTION Scalar div(const SphereBlock &b, const SphereBlockScratch &t0, const SphereBlockScratch &t1) const
+  {
+    Scalar duv = 0;
+    for (int j = 0; j < NP; j++) {
+      duv += dvv(b.y,j) * t0(b.x,j) + dvv(b.x,j) * t1(j,b.y);
+          }
+    const Scalar rrdmd = (1.0 / metdet(b.e,b.x,b.y)) * scale_factor_inv;
+    return duv * rrdmd;
+  }
+
   KOKKOS_INLINE_FUNCTION void divInit(SphereBlockScratch &t0, SphereBlockScratch &t1, const SphereBlock &b, const Scalar v0, const Scalar v1) const
   {
     t0.sv(b.x,b.y) = (dinv(b.e,0,0,b.x,b.y) * v0 + dinv(b.e,1,0,b.x,b.y) * v1) * metdet(b.e,b.x,b.y);
@@ -572,12 +582,7 @@ struct CaarFunctorImpl {
 
           b.barrier();
 
-          Scalar duv = 0;
-          for (int j = 0; j < NP; j++) {
-            duv += sg.dvv(b.y,j) * ttmp0(b.x,j) + sg.dvv(b.x,j) * ttmp1(j,b.y);
-          }
-          const Scalar rrdmd = (1.0 / sg.metdet(b.e,b.x,b.y)) * sg.scale_factor_inv;
-          const Scalar dvdp = duv * rrdmd;
+          const Scalar dvdp = sg.div(b, ttmp0, ttmp1);
           buffers_dp_tens(b.e,b.x,b.y,b.z) = dvdp;
 
           Scalar tt = dvdp * vtheta;
