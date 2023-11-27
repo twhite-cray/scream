@@ -58,6 +58,7 @@ struct SphereBlock {
   const Team &t;
   int e,x,y,z;
   Real rrdmd;
+  Real dinv00, dinv01, dinv10, dinv11;
 
   KOKKOS_INLINE_FUNCTION SphereBlock(const Team &team, const SphereGlobal &sg);
 
@@ -192,8 +193,8 @@ struct SphereGlobal {
   KOKKOS_INLINE_FUNCTION void divInit(SphereBlockScratch &t0, SphereBlockScratch &t1, SphereBlock &b, const Scalar v0, const Scalar v1) const
   {
     const Real md = metdet(b.e,b.x,b.y);
-    t0.sv(b.x,b.y) = (dinv(b.e,0,0,b.x,b.y) * v0 + dinv(b.e,1,0,b.x,b.y) * v1) * md;
-    t1.sv(b.x,b.y) = (dinv(b.e,0,1,b.x,b.y) * v0 + dinv(b.e,1,1,b.x,b.y) * v1) * md;
+    t0.sv(b.x,b.y) = (b.dinv00 * v0 + b.dinv10 * v1) * md;
+    t1.sv(b.x,b.y) = (b.dinv01 * v0 + b.dinv11 * v1) * md;
     if (b.rrdmd == 0) b.rrdmd = (1.0 / md) * scale_factor_inv;
   }
 
@@ -207,8 +208,8 @@ struct SphereGlobal {
     }
     s0 *= scale_factor_inv;
     s1 *= scale_factor_inv;
-    g0 = dinv(b.e,0,0,b.x,b.y) * s0 + dinv(b.e,0,1,b.x,b.y) * s1;
-    g1 = dinv(b.e,1,0,b.x,b.y) * s0 + dinv(b.e,1,1,b.x,b.y) * s1;
+    g0 = b.dinv00 * s0 + b.dinv01 * s1;
+    g1 = b.dinv10 * s0 + b.dinv11 * s1;
   }
 
   template <typename OutView, typename InView>
@@ -256,6 +257,11 @@ KOKKOS_INLINE_FUNCTION SphereBlock::SphereBlock(const Team &team, const SphereGl
     y = ixy % NP;
     const int dz = tr % SPHERE_BLOCK_LEV;
     z = dz + iw * SPHERE_BLOCK_LEV;
+
+    dinv00 = sg.dinv(e,0,0,x,y);
+    dinv01 = sg.dinv(e,0,1,x,y);
+    dinv10 = sg.dinv(e,1,0,x,y);
+    dinv11 = sg.dinv(e,1,1,x,y);
   }
 
 // Theta does not use tracers in caar. A fwd decl is enough here
@@ -773,46 +779,40 @@ struct CaarFunctorImpl {
           vt0 -= 0.5 * (buffers_v_i(b.e,0,b.x,b.y,b.z) * state_w_i(b.e,data_n0,b.x,b.y,b.z) + buffers_v_i(b.e,0,b.x,b.y,b.z+1) * state_w_i(b.e,data_n0,b.x,b.y,b.z+1));
           vt1 -= 0.5 * (buffers_v_i(b.e,1,b.x,b.y,b.z) * state_w_i(b.e,data_n0,b.x,b.y,b.z) + buffers_v_i(b.e,1,b.x,b.y,b.z+1) * state_w_i(b.e,data_n0,b.x,b.y,b.z+1));
 
-          {
-            Scalar grad_tmp0, grad_tmp1;
-            sg.grad(grad_tmp0, grad_tmp1, b, ttmp0);
-            vt0 += grad_tmp0;
-            vt1 += grad_tmp1;
+          Scalar grad_w0, grad_w1;
+          sg.grad(grad_w0, grad_w1, b, ttmp0);
+          vt0 += grad_w0;
+          vt1 += grad_w1;
+
+          Scalar grad_exner0, grad_exner1;
+          sg.grad(grad_exner0, grad_exner1, b, ttmp1);
+
+          const Scalar vtheta = state_vtheta_dp(b.e,data_n0,b.x,b.y,b.z) / state_dp3d(b.e,data_n0,b.x,b.y,b.z);
+          const Scalar cp_vtheta = PhysicalConstants::cp * vtheta;
+          vt0 += cp_vtheta * grad_exner0;
+          vt1 += cp_vtheta * grad_exner1;
+
+          if (pgrad_correction) {
+            Scalar grad_lexner0, grad_lexner1;
+            sg.grad(grad_lexner0, grad_lexner1, b, ttmp2);
+
+            namespace PC = PhysicalConstants;
+            constexpr Real cpt0 = PC::cp * (PC::Tref - PC::Tref_lapse_rate * PC::Tref * PC::cp / PC::g);
+            vt0 += cpt0 * (grad_lexner0 - grad_exner0 * exner_inv);
+            vt1 += cpt0 * (grad_lexner1 - grad_exner1 * exner_inv);
           }
 
-          {
-            Scalar grad_exner0, grad_exner1;
-            sg.grad(grad_exner0, grad_exner1, b, ttmp1);
+          const Scalar vort = sg.vort(b, ttmp3, ttmp4) + geometry_fcor(b.e,b.x,b.y);
+          vt0 -= v1 * vort;
+          vt1 += v0 * vort;
 
-            const Scalar vtheta = state_vtheta_dp(b.e,data_n0,b.x,b.y,b.z) / state_dp3d(b.e,data_n0,b.x,b.y,b.z);
-            const Scalar cp_vtheta = PhysicalConstants::cp * vtheta;
-            vt0 += cp_vtheta * grad_exner0;
-            vt1 += cp_vtheta * grad_exner1;
+          Scalar grad_v0, grad_v1;
+          sg.grad(grad_v0, grad_v1, b, ttmp5);
+          vt0 += grad_v0;
+          vt1 += grad_v1;
 
-            if (pgrad_correction) {
-              Scalar grad_lexner0, grad_lexner1;
-              sg.grad(grad_lexner0, grad_lexner1, b, ttmp2);
-
-              namespace PC = PhysicalConstants;
-              constexpr Real cpt0 = PC::cp * (PC::Tref - PC::Tref_lapse_rate * PC::Tref * PC::cp / PC::g);
-              vt0 += cpt0 * (grad_lexner0 - grad_exner0 * exner_inv);
-              vt1 += cpt0 * (grad_lexner1 - grad_exner1 * exner_inv);
-            }
-          }
-
-          {
-            const Scalar vort = sg.vort(b, ttmp3, ttmp4) + geometry_fcor(b.e,b.x,b.y);
-            vt0 -= v1 * vort;
-            vt1 += v0 * vort;
-
-            Scalar grad_tmp0, grad_tmp1;
-            sg.grad(grad_tmp0, grad_tmp1, b, ttmp5);
-            vt0 += grad_tmp0;
-            vt1 += grad_tmp1;
-
-            buffers_v_tens(b.e,0,b.x,b.y,b.z) = vt0;
-            buffers_v_tens(b.e,1,b.x,b.y,b.z) = vt1;
-          }
+          buffers_v_tens(b.e,0,b.x,b.y,b.z) = vt0;
+          buffers_v_tens(b.e,1,b.x,b.y,b.z) = vt1;
         });
 
       // np1
