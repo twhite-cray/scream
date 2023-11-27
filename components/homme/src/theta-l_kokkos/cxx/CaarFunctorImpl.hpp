@@ -197,6 +197,20 @@ struct SphereGlobal {
     g1 = dinv(b.e,1,0,b.x,b.y) * s0 + dinv(b.e,1,1,b.x,b.y) * s1;
   }
 
+  KOKKOS_INLINE_FUNCTION void grad(const ExecViewUnmanaged<Scalar*[2][NP][NP][NUM_LEV_P]> &out, const SphereCol &c, const ExecViewManaged<Scalar*[NUM_TIME_LEVELS][NP][NP][NUM_LEV_P]> &in, const int n) const
+  {
+    Scalar s0 = 0;
+    Scalar s1 = 0;
+    for (int j = 0; j < NP; j++) {
+      s0 += dvv(c.y,j) * in(c.e,n,c.x,j,c.z); 
+      s1 += dvv(c.x,j) * in(c.e,n,j,c.y,c.z);
+    }
+    s0 *= scale_factor_inv;
+    s1 *= scale_factor_inv;
+    out(c.e,0,c.x,c.y,c.z) = dinv(c.e,0,0,c.x,c.y) * s0 + dinv(c.e,0,1,c.x,c.y) * s1;
+    out(c.e,1,c.x,c.y,c.z) = dinv(c.e,1,0,c.x,c.y) * s0 + dinv(c.e,1,1,c.x,c.y) * s1;
+  }
+
   KOKKOS_INLINE_FUNCTION void divInit(SphereBlockScratch &t0, SphereBlockScratch &t1, const SphereBlock &b, const Scalar v0, const Scalar v1) const
   {
     t0.sv(b.x,b.y) = (dinv(b.e,0,0,b.x,b.y) * v0 + dinv(b.e,1,0,b.x,b.y) * v1) * metdet(b.e,b.x,b.y);
@@ -667,37 +681,8 @@ struct CaarFunctorImpl {
 
           const SphereCol c(team);
 
-          Scalar a0 = 0;
-          Scalar a1 = 0;
-          for (int j = 0; j < NP; j++) {
-            a0 += sg.dvv(c.y,j) * state_w_i(c.e,data_n0,c.x,j,c.z); 
-            a1 += sg.dvv(c.x,j) * state_w_i(c.e,data_n0,j,c.y,c.z);
-          }
-          a0 *= sg.scale_factor_inv;
-          a1 *= sg.scale_factor_inv;
-          buffers_v_i(c.e,0,c.x,c.y,c.z) = sg.dinv(c.e,0,0,c.x,c.y) * a0 + sg.dinv(c.e,0,1,c.x,c.y) * a1;
-          buffers_v_i(c.e,1,c.x,c.y,c.z) = sg.dinv(c.e,1,0,c.x,c.y) * a0 + sg.dinv(c.e,1,1,c.x,c.y) * a1;
-
-          Scalar p0 = 0;
-          Scalar p1 = 0;
-          for (int j = 0; j < NP; j++) {
-            p0 += sg.dvv(c.y,j) * state_phinh_i(c.e,data_n0,c.x,j,c.z);
-            p1 += sg.dvv(c.x,j) * state_phinh_i(c.e,data_n0,j,c.y,c.z);
-          }
-          p0 *= sg.scale_factor_inv;
-          p1 *= sg.scale_factor_inv;
-
-          Scalar w0 = 0;
-          Scalar w1 = 0;
-          for (int j = 0; j < NP; j++) {
-            w0 += sg.dvv(c.y,j) * state_w_i(c.e,data_n0,c.x,j,c.z);
-            w1 += sg.dvv(c.x,j) * state_w_i(c.e,data_n0,j,c.y,c.z);
-          }
-          w0 *= sg.scale_factor_inv;
-          w1 *= sg.scale_factor_inv;
-
-          const Scalar grad_w_i0 = sg.dinv(c.e,0,0,c.x,c.y) * w0 + sg.dinv(c.e,0,1,c.x,c.y) * w1;
-          const Scalar grad_w_i1 = sg.dinv(c.e,1,0,c.x,c.y) * w0 + sg.dinv(c.e,1,1,c.x,c.y) * w1;
+          sg.grad(buffers_v_i, c, state_w_i, data_n0);
+          sg.grad(buffers_grad_phinh_i, c, state_phinh_i, data_n0);
 
           const Scalar dm = (c.z > 0) ? state_dp3d(c.e,data_n0,c.x,c.y,c.z-1) : 0;
           const Scalar dz = (c.z < NUM_LEV) ? state_dp3d(c.e,data_n0,c.x,c.y,c.z) : 0;
@@ -711,7 +696,7 @@ struct CaarFunctorImpl {
           const Scalar v1z = (c.z < NUM_LEV) ? state_v(c.e,data_n0,1,c.x,c.y,c.z) : 0;
           const Scalar v_i1 = (dz * v1z + dm * v1m) * denom;
 
-          Scalar wt = v_i0 * grad_w_i0 + v_i1 * grad_w_i1;
+          Scalar wt = v_i0 * buffers_v_i(c.e,0,c.x,c.y,c.z) + v_i1 * buffers_v_i(c.e,1,c.x,c.y,c.z);
           wt *= -data_scale1;
 
           const Scalar pm = (c.z > 0) ? buffers_pnh(c.e,c.x,c.y,c.z-1) : pi_i00;
@@ -722,8 +707,6 @@ struct CaarFunctorImpl {
           wt += (buffers_dpnh_dp_i(c.e,c.x,c.y,c.z) - 1.0) * scale;
           buffers_w_tens(c.e,c.x,c.y,c.z) = wt;
 
-          buffers_grad_phinh_i(c.e,0,c.x,c.y,c.z) = sg.dinv(c.e,0,0,c.x,c.y) * p0 + sg.dinv(c.e,0,1,c.x,c.y) * p1;
-          buffers_grad_phinh_i(c.e,1,c.x,c.y,c.z) = sg.dinv(c.e,1,0,c.x,c.y) * p0 + sg.dinv(c.e,1,1,c.x,c.y) * p1;
           Scalar pt = v_i0 * buffers_grad_phinh_i(c.e,0,c.x,c.y,c.z) + v_i1 * buffers_grad_phinh_i(c.e,1,c.x,c.y,c.z);
           pt *= -data_scale1;
           pt += state_w_i(c.e,data_n0,c.x,c.y,c.z) * gscale2;
