@@ -83,6 +83,11 @@ struct SphereBlockScratch {
   SphereBlockScratchView v;
   SphereBlockScratchSubview sv;
 
+  KOKKOS_INLINE_FUNCTION SphereBlockScratch(const SphereBlock &b):
+    v(b.t.team_scratch(0)),
+    sv(Kokkos::subview(v, b.z % SPHERE_BLOCK_LEV, Kokkos::ALL, Kokkos::ALL))
+  { }
+
   KOKKOS_INLINE_FUNCTION SphereBlockScratch(const SphereBlock &b, const Scalar val):
     v(b.t.team_scratch(0)),
     sv(Kokkos::subview(v, b.z % SPHERE_BLOCK_LEV, Kokkos::ALL, Kokkos::ALL))
@@ -167,6 +172,18 @@ struct SphereGlobal {
     metdet(that.m_metdet),
     scale_factor_inv(that.m_scale_factor_inv)
   {}
+
+  KOKKOS_INLINE_FUNCTION void divInit(SphereBlockScratch &t0, SphereBlockScratch &t1, const SphereBlock &b, const Scalar v0, const Scalar v1) const
+  {
+    t0.sv(b.x,b.y) = (dinv(b.e,0,0,b.x,b.y) * v0 + dinv(b.e,1,0,b.x,b.y) * v1) * metdet(b.e,b.x,b.y);
+    t1.sv(b.x,b.y) = (dinv(b.e,0,1,b.x,b.y) * v0 + dinv(b.e,1,1,b.x,b.y) * v1) * metdet(b.e,b.x,b.y);
+  }
+
+  KOKKOS_INLINE_FUNCTION void vortInit(SphereBlockScratch &t0, SphereBlockScratch &t1, const SphereBlock &b, const Scalar v0, const Scalar v1) const
+  {
+    t0.sv(b.x,b.y) = d(b.e,0,0,b.x,b.y) * v0 + d(b.e,0,1,b.x,b.y) * v1;
+    t1.sv(b.x,b.y) = d(b.e,1,0,b.x,b.y) * v0 + d(b.e,1,1,b.x,b.y) * v1;
+  }
 };
 
 // Theta does not use tracers in caar. A fwd decl is enough here
@@ -546,8 +563,9 @@ struct CaarFunctorImpl {
           derived_vn0(b.e,0,b.x,b.y,b.z) += data_eta_ave_w * v0;
           derived_vn0(b.e,1,b.x,b.y,b.z) += data_eta_ave_w * v1;
 
-          const SphereBlockScratch ttmp0(b, (sg.dinv(b.e,0,0,b.x,b.y) * v0 + sg.dinv(b.e,1,0,b.x,b.y) * v1) * sg.metdet(b.e,b.x,b.y));
-          const SphereBlockScratch ttmp1(b, (sg.dinv(b.e,0,1,b.x,b.y) * v0 + sg.dinv(b.e,1,1,b.x,b.y) * v1) * sg.metdet(b.e,b.x,b.y));
+          SphereBlockScratch ttmp0(b);
+          SphereBlockScratch ttmp1(b);
+          sg.divInit(ttmp0, ttmp1, b, v0, v1);
 
           const Scalar vtheta = state_vtheta_dp(b.e,data_n0,b.x,b.y,b.z) / state_dp3d(b.e,data_n0,b.x,b.y,b.z);
           const SphereBlockScratch ttmp2(b, vtheta);
@@ -726,8 +744,10 @@ struct CaarFunctorImpl {
           const Scalar v0 = state_v(b.e,data_n0,0,b.x,b.y,b.z);
           const Scalar v1 = state_v(b.e,data_n0,1,b.x,b.y,b.z);
 
-          const SphereBlockScratch ttmp3(b, sg.d(b.e,0,0,b.x,b.y) * v0 + sg.d(b.e,0,1,b.x,b.y) * v1);
-          const SphereBlockScratch ttmp4(b, sg.d(b.e,1,0,b.x,b.y) * v0 + sg.d(b.e,1,1,b.x,b.y) * v1);
+          SphereBlockScratch ttmp3(b);
+          SphereBlockScratch ttmp4(b);
+          sg.vortInit(ttmp3, ttmp4, b, v0, v1);
+
           const SphereBlockScratch ttmp5(b, 0.5 * (v0 * v0 + v1 * v1));
 
           b.barrier();
