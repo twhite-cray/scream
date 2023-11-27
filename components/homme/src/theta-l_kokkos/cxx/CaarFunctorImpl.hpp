@@ -215,7 +215,8 @@ struct SphereGlobal {
     g1 = dinv(b.e,1,0,b.x,b.y) * s0 + dinv(b.e,1,1,b.x,b.y) * s1;
   }
 
-  KOKKOS_INLINE_FUNCTION void grad(const ExecViewUnmanaged<Scalar*[2][NP][NP][NUM_LEV_P]> &out, const SphereCol &c, const ExecViewManaged<Scalar*[NUM_TIME_LEVELS][NP][NP][NUM_LEV_P]> &in, const int n) const
+  template <typename OutView, typename InView>
+  KOKKOS_INLINE_FUNCTION void grad(OutView &out, const SphereCol &c, const InView &in, const int n) const
   {
     Scalar s0 = 0;
     Scalar s1 = 0;
