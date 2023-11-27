@@ -197,13 +197,23 @@ struct SphereGlobal {
     g1 = dinv(b.e,1,0,b.x,b.y) * s0 + dinv(b.e,1,1,b.x,b.y) * s1;
   }
 
-KOKKOS_INLINE_FUNCTION void divInit(SphereBlockScratch &t0, SphereBlockScratch &t1, const SphereBlock &b, const Scalar v0, const Scalar v1) const
+  KOKKOS_INLINE_FUNCTION void divInit(SphereBlockScratch &t0, SphereBlockScratch &t1, const SphereBlock &b, const Scalar v0, const Scalar v1) const
   {
     t0.sv(b.x,b.y) = (dinv(b.e,0,0,b.x,b.y) * v0 + dinv(b.e,1,0,b.x,b.y) * v1) * metdet(b.e,b.x,b.y);
     t1.sv(b.x,b.y) = (dinv(b.e,0,1,b.x,b.y) * v0 + dinv(b.e,1,1,b.x,b.y) * v1) * metdet(b.e,b.x,b.y);
   }
 
-  KOKKOS_INLINE_FUNCTION void vortInit(SphereBlockScratch &t0, SphereBlockScratch &t1, const SphereBlock &b, const Scalar v0, const Scalar v1) const
+  KOKKOS_INLINE_FUNCTION Scalar vort(const SphereBlock &b, const SphereBlockScratch &t0, const SphereBlockScratch &t1) const
+  {
+    Scalar dvmdu = 0;
+    for (int j = 0; j < NP; j++) {
+      dvmdu += dvv(b.y,j) * t1(b.x,j) - dvv(b.x,j) * t0(j,b.y);
+    }
+    const Scalar rrdmd = (1.0 / metdet(b.e,b.x,b.y)) * scale_factor_inv;
+    return dvmdu * rrdmd;
+  }
+
+KOKKOS_INLINE_FUNCTION void vortInit(SphereBlockScratch &t0, SphereBlockScratch &t1, const SphereBlock &b, const Scalar v0, const Scalar v1) const
   {
     t0.sv(b.x,b.y) = d(b.e,0,0,b.x,b.y) * v0 + d(b.e,0,1,b.x,b.y) * v1;
     t1.sv(b.x,b.y) = d(b.e,1,0,b.x,b.y) * v0 + d(b.e,1,1,b.x,b.y) * v1;
@@ -787,26 +797,14 @@ struct CaarFunctorImpl {
           }
 
           {
-            Scalar dvmdu = 0;
-            for (int j = 0; j < NP; j++) {
-              dvmdu += sg.dvv(b.y,j) * ttmp4(b.x,j) - sg.dvv(b.x,j) * ttmp3(j,b.y);
-            }
-            const Scalar rrdmd = (1.0 / sg.metdet(b.e,b.x,b.y)) * sg.scale_factor_inv;
-            const Scalar vort = dvmdu * rrdmd + geometry_fcor(b.e,b.x,b.y);
-
+            const Scalar vort = sg.vort(b, ttmp3, ttmp4) + geometry_fcor(b.e,b.x,b.y);
             vt0 -= v1 * vort;
             vt1 += v0 * vort;
 
-            Scalar s0 = 0;
-            Scalar s1 = 0;
-            for (int j = 0; j < NP; j++) {
-              s0 += sg.dvv(b.y,j) * ttmp5(b.x,j);
-              s1 += sg.dvv(b.x,j) * ttmp5(j,b.y);
-            }
-            s0 *= sg.scale_factor_inv;
-            s1 *= sg.scale_factor_inv;
-            vt0 += sg.dinv(b.e,0,0,b.x,b.y) * s0 + sg.dinv(b.e,0,1,b.x,b.y) * s1;
-            vt1 += sg.dinv(b.e,1,0,b.x,b.y) * s0 + sg.dinv(b.e,1,1,b.x,b.y) * s1;
+            Scalar grad_tmp0, grad_tmp1;
+            sg.grad(grad_tmp0, grad_tmp1, b, ttmp5);
+            vt0 += grad_tmp0;
+            vt1 += grad_tmp1;
 
             buffers_v_tens(b.e,0,b.x,b.y,b.z) = vt0;
             buffers_v_tens(b.e,1,b.x,b.y,b.z) = vt1;
