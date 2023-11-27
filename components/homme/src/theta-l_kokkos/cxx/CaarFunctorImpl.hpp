@@ -46,12 +46,6 @@ static_assert(NUM_LEV % SPHERE_BLOCK_LEV == 0, "NUM_LEV not divisible by WARP_SI
 static constexpr int SPHERE_BLOCKS_PER_COL = NUM_LEV / SPHERE_BLOCK_LEV;
 static constexpr int SPHERE_BLOCK = NPNP * SPHERE_BLOCK_LEV;
 
-using SphereScratch = Kokkos::View<
-  Scalar[SPHERE_BLOCK_LEV][NP][NP],
-  ExecSpace::scratch_memory_space,
-  Kokkos::MemoryTraits<Kokkos::Unmanaged>
-    >;
-
 struct SphereBlock {
   const Team &t;
   int e,x,y,z;
@@ -71,6 +65,36 @@ struct SphereBlock {
   }
 
   KOKKOS_INLINE_FUNCTION void barrier() const { t.team_barrier(); }
+};
+
+using SphereBlockScratchView = Kokkos::View<
+  Scalar[SPHERE_BLOCK_LEV][NP][NP],
+  ExecSpace::scratch_memory_space,
+  Kokkos::MemoryTraits<Kokkos::Unmanaged>
+    >;
+
+using SphereBlockScratchSubview = Kokkos::Subview<
+  SphereBlockScratchView, int,
+  std::remove_const_t<decltype(Kokkos::ALL)>,
+  std::remove_const_t<decltype(Kokkos::ALL)>
+    >;
+
+struct SphereBlockScratch {
+  SphereBlockScratchView v;
+  SphereBlockScratchSubview sv;
+
+  KOKKOS_INLINE_FUNCTION SphereBlockScratch(const SphereBlock &b, const Scalar val):
+    v(b.t.team_scratch(0)),
+    sv(Kokkos::subview(v, b.z % SPHERE_BLOCK_LEV, Kokkos::ALL, Kokkos::ALL))
+  {
+    sv(b.x,b.y) = val;
+  }
+
+  KOKKOS_INLINE_FUNCTION Scalar operator()(const int x, const int y) const
+  { return sv(x,y); }
+
+  static size_t shmem_size()
+  { return SphereBlockScratchView::shmem_size(); }
 };
 
 struct SphereCol {
@@ -511,20 +535,10 @@ struct CaarFunctorImpl {
       Kokkos::parallel_for(
         "caar compute div_vdp",
         TeamPolicy(m_num_elems * SPHERE_BLOCKS_PER_COL, SPHERE_BLOCK).
-        set_scratch_size(0, Kokkos::PerTeam(3 * SphereScratch::shmem_size())),
+        set_scratch_size(0, Kokkos::PerTeam(3 * SphereBlockScratch::shmem_size())),
         KOKKOS_LAMBDA(const Team &team) {
 
           const SphereBlock b(team);
-          const int dz = b.z % SPHERE_BLOCK_LEV;
-
-          SphereScratch ttmp00(b.t.team_scratch(0));
-          auto ttmp0 = Kokkos::subview(ttmp00,dz,Kokkos::ALL,Kokkos::ALL);
-
-          SphereScratch ttmp10(b.t.team_scratch(0));
-          auto ttmp1 = Kokkos::subview(ttmp10,dz,Kokkos::ALL,Kokkos::ALL);
-
-          SphereScratch ttmp20(b.t.team_scratch(0));
-          auto ttmp2 = Kokkos::subview(ttmp20,dz,Kokkos::ALL,Kokkos::ALL);
 
           const Scalar v0 = state_v(b.e,data_n0,0,b.x,b.y,b.z) * state_dp3d(b.e,data_n0,b.x,b.y,b.z);
           const Scalar v1 = state_v(b.e,data_n0,1,b.x,b.y,b.z) * state_dp3d(b.e,data_n0,b.x,b.y,b.z);
@@ -532,11 +546,11 @@ struct CaarFunctorImpl {
           derived_vn0(b.e,0,b.x,b.y,b.z) += data_eta_ave_w * v0;
           derived_vn0(b.e,1,b.x,b.y,b.z) += data_eta_ave_w * v1;
 
-          ttmp0(b.x,b.y) = (sg.dinv(b.e,0,0,b.x,b.y) * v0 + sg.dinv(b.e,1,0,b.x,b.y) * v1) * sg.metdet(b.e,b.x,b.y);
-          ttmp1(b.x,b.y) = (sg.dinv(b.e,0,1,b.x,b.y) * v0 + sg.dinv(b.e,1,1,b.x,b.y) * v1) * sg.metdet(b.e,b.x,b.y);
+          const SphereBlockScratch ttmp0(b, (sg.dinv(b.e,0,0,b.x,b.y) * v0 + sg.dinv(b.e,1,0,b.x,b.y) * v1) * sg.metdet(b.e,b.x,b.y));
+          const SphereBlockScratch ttmp1(b, (sg.dinv(b.e,0,1,b.x,b.y) * v0 + sg.dinv(b.e,1,1,b.x,b.y) * v1) * sg.metdet(b.e,b.x,b.y));
 
           const Scalar vtheta = state_vtheta_dp(b.e,data_n0,b.x,b.y,b.z) / state_dp3d(b.e,data_n0,b.x,b.y,b.z);
-          ttmp2(b.x,b.y) = vtheta;
+          const SphereBlockScratch ttmp2(b, vtheta);
 
           b.barrier();
 
@@ -578,16 +592,11 @@ struct CaarFunctorImpl {
       Kokkos::parallel_for(
         "caar compute dp_and_theta_tens",
         TeamPolicy(m_num_elems * SPHERE_BLOCKS_PER_COL, SPHERE_BLOCK).
-        set_scratch_size(0, Kokkos::PerTeam(SphereScratch::shmem_size())),
+        set_scratch_size(0, Kokkos::PerTeam(SphereBlockScratch::shmem_size())),
         KOKKOS_LAMBDA(const Team &team) {
 
           const SphereBlock b(team);
-          const int dz = b.z % SPHERE_BLOCK_LEV;
-
-          SphereScratch ttmp00(b.t.team_scratch(0));
-          auto ttmp0 = Kokkos::subview(ttmp00,dz,Kokkos::ALL,Kokkos::ALL);
-
-          ttmp0(b.x,b.y) = 0.5 * (buffers_pi_i(b.e,b.x,b.y,b.z) + buffers_pi_i(b.e,b.x,b.y,b.z+1));
+          const SphereBlockScratch ttmp0(b, 0.5 * (buffers_pi_i(b.e,b.x,b.y,b.z) + buffers_pi_i(b.e,b.x,b.y,b.z+1)));
 
           b.barrier();
 
@@ -699,43 +708,27 @@ struct CaarFunctorImpl {
       Kokkos::parallel_for(
         "caar compute v_tens",
         TeamPolicy(m_num_elems * SPHERE_BLOCKS_PER_COL, SPHERE_BLOCK).
-        set_scratch_size(0, Kokkos::PerTeam(6 * SphereScratch::shmem_size())),
+        set_scratch_size(0, Kokkos::PerTeam(6 * SphereBlockScratch::shmem_size())),
         KOKKOS_LAMBDA(const Team &team) {
 
           const SphereBlock b(team);
-          const int dz = b.z % SPHERE_BLOCK_LEV;
-
-          SphereScratch ttmp00(b.t.team_scratch(0));
-          auto ttmp0 = Kokkos::subview(ttmp00,dz,Kokkos::ALL,Kokkos::ALL);
-
-          SphereScratch ttmp10(b.t.team_scratch(0));
-          auto ttmp1 = Kokkos::subview(ttmp10,dz,Kokkos::ALL,Kokkos::ALL);
-
-          SphereScratch ttmp20(b.t.team_scratch(0));
-          auto ttmp2 = Kokkos::subview(ttmp20,dz,Kokkos::ALL,Kokkos::ALL);
-
-          SphereScratch ttmp30(b.t.team_scratch(0));
-          auto ttmp3 = Kokkos::subview(ttmp30,dz,Kokkos::ALL,Kokkos::ALL);
-
-          SphereScratch ttmp40(b.t.team_scratch(0));
-          auto ttmp4 = Kokkos::subview(ttmp40,dz,Kokkos::ALL,Kokkos::ALL);
-
-          SphereScratch ttmp50(b.t.team_scratch(0));
-          auto ttmp5 = Kokkos::subview(ttmp50,dz,Kokkos::ALL,Kokkos::ALL);
-
-          ttmp0(b.x,b.y) = 0.25 * (state_w_i(b.e,data_n0,b.x,b.y,b.z) * state_w_i(b.e,data_n0,b.x,b.y,b.z) + state_w_i(b.e,data_n0,b.x,b.y,b.z+1) * state_w_i(b.e,data_n0,b.x,b.y,b.z+1));
+          const SphereBlockScratch ttmp0(b, 0.25 * (state_w_i(b.e,data_n0,b.x,b.y,b.z) * state_w_i(b.e,data_n0,b.x,b.y,b.z) + state_w_i(b.e,data_n0,b.x,b.y,b.z+1) * state_w_i(b.e,data_n0,b.x,b.y,b.z+1)));
 
           const Scalar exneriz = buffers_exner(b.e,b.x,b.y,b.z);
-          ttmp1(b.x,b.y) = exneriz;
-          if (pgrad_correction) ttmp2(b.x,b.y) = log(exneriz);
+          const SphereBlockScratch ttmp1(b, exneriz);
+
+          Scalar log_exneriz = 0;
+          if (pgrad_correction) log_exneriz = log(exneriz);
+          const SphereBlockScratch ttmp2(b, log_exneriz);
+
           const Scalar exner_inv = 1.0 / exneriz;
 
           const Scalar v0 = state_v(b.e,data_n0,0,b.x,b.y,b.z);
           const Scalar v1 = state_v(b.e,data_n0,1,b.x,b.y,b.z);
 
-          ttmp3(b.x,b.y) = sg.d(b.e,0,0,b.x,b.y) * v0 + sg.d(b.e,0,1,b.x,b.y) * v1;
-          ttmp4(b.x,b.y) = sg.d(b.e,1,0,b.x,b.y) * v0 + sg.d(b.e,1,1,b.x,b.y) * v1;
-          ttmp5(b.x,b.y) = 0.5 * (v0 * v0 + v1 * v1);
+          const SphereBlockScratch ttmp3(b, sg.d(b.e,0,0,b.x,b.y) * v0 + sg.d(b.e,0,1,b.x,b.y) * v1);
+          const SphereBlockScratch ttmp4(b, sg.d(b.e,1,0,b.x,b.y) * v0 + sg.d(b.e,1,1,b.x,b.y) * v1);
+          const SphereBlockScratch ttmp5(b, 0.5 * (v0 * v0 + v1 * v1));
 
           b.barrier();
 
