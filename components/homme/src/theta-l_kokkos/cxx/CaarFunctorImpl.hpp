@@ -99,8 +99,7 @@ struct SphereBlockScratch {
   {}
 
   KOKKOS_INLINE_FUNCTION SphereBlockScratch(const SphereBlock &b, const Scalar val):
-    v(b.t.team_scratch(0)),
-    sv(Kokkos::subview(v, b.z % SPHERE_BLOCK_LEV, Kokkos::ALL, Kokkos::ALL))
+    SphereBlockScratch(b)
   {
     sv(b.x,b.y) = val;
   }
@@ -115,8 +114,8 @@ struct SphereCol {
   const Team &t;
   int e,x,y,z;
 
-  KOKKOS_INLINE_FUNCTION SphereCol(const Team &that):
-    t(that)
+  KOKKOS_INLINE_FUNCTION SphereCol(const Team &team):
+    t(team)
   {
     const int lr = t.league_rank();
     e = lr / NPNP;
@@ -136,8 +135,8 @@ struct SphereElem {
   const Team &t;
   int e,x,y;
 
-  KOKKOS_INLINE_FUNCTION SphereElem(const Team &that):
-    t(that)
+  KOKKOS_INLINE_FUNCTION SphereElem(const Team &team):
+    t(team)
   {
     e = t.league_rank();
     const int tr = t.team_rank();
@@ -146,8 +145,8 @@ struct SphereElem {
   }
 
   template <typename OutView, typename InView>
-  KOKKOS_INLINE_FUNCTION void scan(OutView &out, const InView &in, const Real zero) const {
-
+  KOKKOS_INLINE_FUNCTION void scan(OutView &out, const InView &in, const Real zero) const
+  {
     Kokkos::parallel_scan(
       Kokkos::ThreadVectorRange(t, NUM_LEV),
       [&](const int z, Scalar &sum, const bool last) {
@@ -158,8 +157,8 @@ struct SphereElem {
   }
 
   template <typename OutView, typename InView>
-  KOKKOS_INLINE_FUNCTION void scan(OutView &out, const InView &in, const int n, const Real zero) const {
-
+  KOKKOS_INLINE_FUNCTION void scan(OutView &out, const InView &in, const int n, const Real zero) const
+  {
     Kokkos::parallel_scan(
       Kokkos::ThreadVectorRange(t, NUM_LEV),
       [&](const int z, Scalar &sum, const bool last) {
@@ -201,6 +200,12 @@ struct SphereGlobal {
     return duv * rrdmd;
   }
 
+  KOKKOS_INLINE_FUNCTION void divInit(SphereBlockScratch &t0, SphereBlockScratch &t1, const SphereBlock &b, const Scalar v0, const Scalar v1) const
+  {
+    t0.sv(b.x,b.y) = (dinv(b.e,0,0,b.x,b.y) * v0 + dinv(b.e,1,0,b.x,b.y) * v1) * metdet(b.e,b.x,b.y);
+    t1.sv(b.x,b.y) = (dinv(b.e,0,1,b.x,b.y) * v0 + dinv(b.e,1,1,b.x,b.y) * v1) * metdet(b.e,b.x,b.y);
+  }
+
   KOKKOS_INLINE_FUNCTION void grad(Scalar &g0, Scalar &g1, const SphereBlock &b, const SphereBlockScratch &t) const
   {
     Scalar s0 = 0;
@@ -228,12 +233,6 @@ struct SphereGlobal {
     s1 *= scale_factor_inv;
     out(c.e,0,c.x,c.y,c.z) = dinv(c.e,0,0,c.x,c.y) * s0 + dinv(c.e,0,1,c.x,c.y) * s1;
     out(c.e,1,c.x,c.y,c.z) = dinv(c.e,1,0,c.x,c.y) * s0 + dinv(c.e,1,1,c.x,c.y) * s1;
-  }
-
-  KOKKOS_INLINE_FUNCTION void divInit(SphereBlockScratch &t0, SphereBlockScratch &t1, const SphereBlock &b, const Scalar v0, const Scalar v1) const
-  {
-    t0.sv(b.x,b.y) = (dinv(b.e,0,0,b.x,b.y) * v0 + dinv(b.e,1,0,b.x,b.y) * v1) * metdet(b.e,b.x,b.y);
-    t1.sv(b.x,b.y) = (dinv(b.e,0,1,b.x,b.y) * v0 + dinv(b.e,1,1,b.x,b.y) * v1) * metdet(b.e,b.x,b.y);
   }
 
   KOKKOS_INLINE_FUNCTION Scalar vort(const SphereBlock &b, const SphereBlockScratch &t0, const SphereBlockScratch &t1) const
