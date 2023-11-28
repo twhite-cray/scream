@@ -93,6 +93,9 @@ struct SphereBlockScratch {
 struct SphereBlock {
   const SphereGlobal &g;
   const Team &t;
+  Real dinv[2][2];
+  Real dvvx[NP];
+  Real dvvy[NP];
   int e,x,y,z;
 
   KOKKOS_INLINE_FUNCTION SphereBlock(const SphereGlobal &sg, const Team &team):
@@ -108,6 +111,11 @@ struct SphereBlock {
     y = ixy % NP;
     const int dz = tr % SPHERE_BLOCK_LEV;
     z = dz + iw * SPHERE_BLOCK_LEV;
+    for (int i = 0; i < 2; i++) for (int j = 0; j < 2; j++) dinv[i][j] = g.dinv(e,i,j,x,y);
+    for (int j = 0; j < NP; j++) {
+      dvvx[j] = g.dvv(x,j);
+      dvvy[j] = g.dvv(y,j);
+    }
   }
 
   KOKKOS_INLINE_FUNCTION void barrier() const
@@ -119,7 +127,7 @@ struct SphereBlock {
   {
     Scalar duv = 0;
     for (int j = 0; j < NP; j++) {
-      duv += g.dvv(y,j) * t0(x,j) + g.dvv(x,j) * t1(j,y);
+      duv += dvvy[j] * t0(x,j) + dvvx[j] * t1(j,y);
     }
     const Scalar rrdmd = (1.0 / g.metdet(e,x,y)) * g.scale_factor_inv;
     return duv * rrdmd;
@@ -127,8 +135,8 @@ struct SphereBlock {
 
   KOKKOS_INLINE_FUNCTION void divInit(SphereBlockScratch &t0, SphereBlockScratch &t1, const Scalar v0, const Scalar v1) const
   {
-    t0.sv(x,y) = (g.dinv(e,0,0,x,y) * v0 + g.dinv(e,1,0,x,y) * v1) * g.metdet(e,x,y);
-    t1.sv(x,y) = (g.dinv(e,0,1,x,y) * v0 + g.dinv(e,1,1,x,y) * v1) * g.metdet(e,x,y);
+    t0.sv(x,y) = (dinv[0][0] * v0 + dinv[1][0] * v1) * g.metdet(e,x,y);
+    t1.sv(x,y) = (dinv[0][1] * v0 + dinv[1][1] * v1) * g.metdet(e,x,y);
   }
 
   KOKKOS_INLINE_FUNCTION void grad(Scalar &g0, Scalar &g1, const SphereBlockScratch &t) const
@@ -136,20 +144,20 @@ struct SphereBlock {
     Scalar s0 = 0;
     Scalar s1 = 0;
     for (int j = 0; j < NP; j++) {
-      s0 += g.dvv(y,j) * t(x,j);
-      s1 += g.dvv(x,j) * t(j,y);
+      s0 += dvvy[j] * t(x,j);
+      s1 += dvvx[j] * t(j,y);
     }
     s0 *= g.scale_factor_inv;
     s1 *= g.scale_factor_inv;
-    g0 = g.dinv(e,0,0,x,y) * s0 + g.dinv(e,0,1,x,y) * s1;
-    g1 = g.dinv(e,1,0,x,y) * s0 + g.dinv(e,1,1,x,y) * s1;
+    g0 = dinv[0][0] * s0 + dinv[0][1] * s1;
+    g1 = dinv[1][0] * s0 + dinv[1][1] * s1;
   }
 
   KOKKOS_INLINE_FUNCTION Scalar vort(const SphereBlockScratch &t0, const SphereBlockScratch &t1) const
   {
     Scalar dvmdu = 0;
     for (int j = 0; j < NP; j++) {
-      dvmdu += g.dvv(y,j) * t1(x,j) - g.dvv(x,j) * t0(j,y);
+      dvmdu += dvvy[j] * t1(x,j) - dvvx[j] * t0(j,y);
     }
     const Scalar rrdmd = (1.0 / g.metdet(e,x,y)) * g.scale_factor_inv;
     return dvmdu * rrdmd;
