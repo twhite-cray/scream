@@ -52,7 +52,7 @@ struct SphereGlobal {
   const ExecViewManaged<const Real *[2][2][NP][NP]> dinv;
   const ExecViewManaged<const Real [NP][NP]> dvv;
   const ExecViewManaged<const Real *[NP][NP]> metdet;
-  const Scalar scale_factor_inv;
+  const Real scale_factor_inv;
 
   SphereGlobal(const SphereOperators &op):
     d(op.m_d),
@@ -93,6 +93,9 @@ struct SphereBlockScratch {
 struct SphereBlock {
   const SphereGlobal &g;
   const Team &t;
+  Real scale_factor_inv;
+  Real metdet;
+  Real rrdmd;
   Real dinv[2][2];
   Real dvvx[NP];
   Real dvvy[NP];
@@ -100,7 +103,9 @@ struct SphereBlock {
 
   KOKKOS_INLINE_FUNCTION SphereBlock(const SphereGlobal &sg, const Team &team):
     g(sg),
-    t(team)
+    t(team),
+    scale_factor_inv(g.scale_factor_inv),
+    rrdmd(0)
   {
     const int lr = t.league_rank();
     e = lr / SPHERE_BLOCKS_PER_COL;
@@ -111,6 +116,8 @@ struct SphereBlock {
     y = ixy % NP;
     const int dz = tr % SPHERE_BLOCK_LEV;
     z = dz + iw * SPHERE_BLOCK_LEV;
+
+    metdet = g.metdet(e,x,y);
     for (int i = 0; i < 2; i++) for (int j = 0; j < 2; j++) dinv[i][j] = g.dinv(e,i,j,x,y);
     for (int j = 0; j < NP; j++) {
       dvvx[j] = g.dvv(x,j);
@@ -123,20 +130,20 @@ struct SphereBlock {
     t.team_barrier();
   }
 
-  KOKKOS_INLINE_FUNCTION Scalar div(const SphereBlockScratch &t0, const SphereBlockScratch &t1) const
+  KOKKOS_INLINE_FUNCTION Scalar div(const SphereBlockScratch &t0, const SphereBlockScratch &t1)
   {
     Scalar duv = 0;
     for (int j = 0; j < NP; j++) {
       duv += dvvy[j] * t0(x,j) + dvvx[j] * t1(j,y);
     }
-    const Scalar rrdmd = (1.0 / g.metdet(e,x,y)) * g.scale_factor_inv;
+    if (rrdmd == 0) rrdmd = (1.0 / metdet) * scale_factor_inv;
     return duv * rrdmd;
   }
 
   KOKKOS_INLINE_FUNCTION void divInit(SphereBlockScratch &t0, SphereBlockScratch &t1, const Scalar v0, const Scalar v1) const
   {
-    t0.sv(x,y) = (dinv[0][0] * v0 + dinv[1][0] * v1) * g.metdet(e,x,y);
-    t1.sv(x,y) = (dinv[0][1] * v0 + dinv[1][1] * v1) * g.metdet(e,x,y);
+    t0.sv(x,y) = (dinv[0][0] * v0 + dinv[1][0] * v1) * metdet;
+    t1.sv(x,y) = (dinv[0][1] * v0 + dinv[1][1] * v1) * metdet;
   }
 
   KOKKOS_INLINE_FUNCTION void grad(Scalar &g0, Scalar &g1, const SphereBlockScratch &t) const
@@ -147,19 +154,19 @@ struct SphereBlock {
       s0 += dvvy[j] * t(x,j);
       s1 += dvvx[j] * t(j,y);
     }
-    s0 *= g.scale_factor_inv;
-    s1 *= g.scale_factor_inv;
+    s0 *= scale_factor_inv;
+    s1 *= scale_factor_inv;
     g0 = dinv[0][0] * s0 + dinv[0][1] * s1;
     g1 = dinv[1][0] * s0 + dinv[1][1] * s1;
   }
 
-  KOKKOS_INLINE_FUNCTION Scalar vort(const SphereBlockScratch &t0, const SphereBlockScratch &t1) const
+  KOKKOS_INLINE_FUNCTION Scalar vort(const SphereBlockScratch &t0, const SphereBlockScratch &t1)
   {
     Scalar dvmdu = 0;
     for (int j = 0; j < NP; j++) {
       dvmdu += dvvy[j] * t1(x,j) - dvvx[j] * t0(j,y);
     }
-    const Scalar rrdmd = (1.0 / g.metdet(e,x,y)) * g.scale_factor_inv;
+    if (rrdmd == 0) rrdmd = (1.0 / metdet) * scale_factor_inv;
     return dvmdu * rrdmd;
   }
 
@@ -637,7 +644,7 @@ struct CaarFunctorImpl {
         SphereBlock::policy(m_num_elems, 3),
         KOKKOS_LAMBDA(const Team &team) {
 
-          const SphereBlock b(sg, team);
+          SphereBlock b(sg, team);
 
           const Scalar v0 = state_v(b.e,data_n0,0,b.x,b.y,b.z) * state_dp3d(b.e,data_n0,b.x,b.y,b.z);
           const Scalar v1 = state_v(b.e,data_n0,1,b.x,b.y,b.z) * state_dp3d(b.e,data_n0,b.x,b.y,b.z);
@@ -680,7 +687,7 @@ struct CaarFunctorImpl {
         SphereBlock::policy(m_num_elems, 1),
         KOKKOS_LAMBDA(const Team &team) {
 
-          const SphereBlock b(sg, team);
+          SphereBlock b(sg, team);
           const SphereBlockScratch ttmp0(b, 0.5 * (buffers_pi_i(b.e,b.x,b.y,b.z) + buffers_pi_i(b.e,b.x,b.y,b.z+1)));
 
           b.barrier();
@@ -755,7 +762,7 @@ struct CaarFunctorImpl {
         SphereBlock::policy(m_num_elems, 6),
         KOKKOS_LAMBDA(const Team &team) {
 
-          const SphereBlock b(sg, team);
+          SphereBlock b(sg, team);
           const SphereBlockScratch ttmp0(b, 0.25 * (state_w_i(b.e,data_n0,b.x,b.y,b.z) * state_w_i(b.e,data_n0,b.x,b.y,b.z) + state_w_i(b.e,data_n0,b.x,b.y,b.z+1) * state_w_i(b.e,data_n0,b.x,b.y,b.z+1)));
 
           const Scalar exneriz = buffers_exner(b.e,b.x,b.y,b.z);
