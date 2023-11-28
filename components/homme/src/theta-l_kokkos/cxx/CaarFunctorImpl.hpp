@@ -75,14 +75,14 @@ using SphereBlockScratchSubview = Kokkos::Subview<
   std::remove_const_t<decltype(Kokkos::ALL)>
     >;
 
-struct SphereBlock;
+struct SphereBlockOps;
 
 struct SphereBlockScratch {
   SphereBlockScratchView v;
   SphereBlockScratchSubview sv;
 
-  KOKKOS_INLINE_FUNCTION SphereBlockScratch(const SphereBlock &b);
-  KOKKOS_INLINE_FUNCTION SphereBlockScratch(const SphereBlock &b, const Scalar val);
+  KOKKOS_INLINE_FUNCTION SphereBlockScratch(const SphereBlockOps &b);
+  KOKKOS_INLINE_FUNCTION SphereBlockScratch(const SphereBlockOps &b, const Scalar val);
 
   KOKKOS_INLINE_FUNCTION Scalar operator()(const int x, const int y) const
   {
@@ -90,7 +90,7 @@ struct SphereBlockScratch {
   }
 };
 
-struct SphereBlock {
+struct SphereBlockOps {
   const SphereGlobal &g;
   const Team &t;
   Real scale_factor_inv;
@@ -101,7 +101,7 @@ struct SphereBlock {
   Real dvvy[NP];
   int e,x,y,z;
 
-  KOKKOS_INLINE_FUNCTION SphereBlock(const SphereGlobal &sg, const Team &team):
+  KOKKOS_INLINE_FUNCTION SphereBlockOps(const SphereGlobal &sg, const Team &team):
     g(sg),
     t(team),
     scale_factor_inv(g.scale_factor_inv),
@@ -184,12 +184,12 @@ struct SphereBlock {
 
 };
 
-KOKKOS_INLINE_FUNCTION SphereBlockScratch::SphereBlockScratch(const SphereBlock &b):
+KOKKOS_INLINE_FUNCTION SphereBlockScratch::SphereBlockScratch(const SphereBlockOps &b):
   v(b.t.team_scratch(0)),
   sv(Kokkos::subview(v, b.z % SPHERE_BLOCK_LEV, Kokkos::ALL, Kokkos::ALL))
 {}
 
-KOKKOS_INLINE_FUNCTION SphereBlockScratch::SphereBlockScratch(const SphereBlock &b, const Scalar val):
+KOKKOS_INLINE_FUNCTION SphereBlockScratch::SphereBlockScratch(const SphereBlockOps &b, const Scalar val):
   SphereBlockScratch(b)
 {
   sv(b.x,b.y) = val;
@@ -197,10 +197,6 @@ KOKKOS_INLINE_FUNCTION SphereBlockScratch::SphereBlockScratch(const SphereBlock 
 
 struct SphereCol {
   const Team &t;
-  Real scale_factor_inv;
-  Real dinv[2][2];
-  Real dvvx[NP];
-  Real dvvy[NP];
   int e,x,y,z;
 
   KOKKOS_INLINE_FUNCTION SphereCol(const Team &team):
@@ -213,8 +209,19 @@ struct SphereCol {
     y = xy % NP;
     z = t.team_rank();
   }
+  static TeamPolicy policy(const int num_elems, const int num_lev)
+  {
+    return TeamPolicy(num_elems * NPNP, num_lev);
+  }
+};
 
-  KOKKOS_INLINE_FUNCTION SphereCol(const SphereGlobal &sg, const Team &team):
+struct SphereColOps: SphereCol {
+  Real scale_factor_inv;
+  Real dinv[2][2];
+  Real dvvx[NP];
+  Real dvvy[NP];
+
+  KOKKOS_INLINE_FUNCTION SphereColOps(const SphereGlobal &sg, const Team &team):
     SphereCol(team)
   {
     scale_factor_inv = sg.scale_factor_inv;
@@ -239,18 +246,13 @@ struct SphereCol {
     out(e,0,x,y,z) = dinv[0][0] * s0 + dinv[0][1] * s1;
     out(e,1,x,y,z) = dinv[1][0] * s0 + dinv[1][1] * s1;
   }
-
-  static TeamPolicy policy(const int num_elems, const int num_lev)
-  {
-    return TeamPolicy(num_elems * NPNP, num_lev);
-  }
 };
 
-struct SphereElem {
+struct SphereElemOps {
   const Team &t;
   int e,x,y;
 
-  KOKKOS_INLINE_FUNCTION SphereElem(const Team &team):
+  KOKKOS_INLINE_FUNCTION SphereElemOps(const Team &team):
     t(team)
   {
     e = t.league_rank();
@@ -654,10 +656,10 @@ struct CaarFunctorImpl {
       // compute_div_vdp
       Kokkos::parallel_for(
         "caar compute div_vdp",
-        SphereBlock::policy(m_num_elems, 3),
+        SphereBlockOps::policy(m_num_elems, 3),
         KOKKOS_LAMBDA(const Team &team) {
 
-          SphereBlock b(sg, team);
+          SphereBlockOps b(sg, team);
 
           const Scalar v0 = state_v(b.e,data_n0,0,b.x,b.y,b.z) * state_dp3d(b.e,data_n0,b.x,b.y,b.z);
           const Scalar v1 = state_v(b.e,data_n0,1,b.x,b.y,b.z) * state_dp3d(b.e,data_n0,b.x,b.y,b.z);
@@ -687,9 +689,9 @@ struct CaarFunctorImpl {
       // compute_scan_quantities
       Kokkos::parallel_for(
         "caar compute scan_quantities",
-        SphereElem::policy(m_num_elems),
+        SphereElemOps::policy(m_num_elems),
         KOKKOS_LAMBDA(const Team &team) {
-          const SphereElem e(team);
+          const SphereElemOps e(team);
           e.scan(buffers_pi_i, state_dp3d, data_n0, pi_i00);
           e.scan(buffers_w_tens, buffers_dp_tens, 0);
         });
@@ -697,10 +699,10 @@ struct CaarFunctorImpl {
       // compute_dp_and_theta_tens
       Kokkos::parallel_for(
         "caar compute dp_and_theta_tens",
-        SphereBlock::policy(m_num_elems, 1),
+        SphereBlockOps::policy(m_num_elems, 1),
         KOKKOS_LAMBDA(const Team &team) {
 
-          SphereBlock b(sg, team);
+          SphereBlockOps b(sg, team);
           const SphereBlockScratch ttmp0(b, 0.5 * (buffers_pi_i(b.e,b.x,b.y,b.z) + buffers_pi_i(b.e,b.x,b.y,b.z+1)));
 
           b.barrier();
@@ -729,10 +731,10 @@ struct CaarFunctorImpl {
       // compute_w_and_phi_tens
       Kokkos::parallel_for(
         "caar compute interface_quantities w_and_phi_tens",
-        SphereCol::policy(m_num_elems, NUM_LEV_P),
+        SphereColOps::policy(m_num_elems, NUM_LEV_P),
         KOKKOS_LAMBDA(const Team &team) {
 
-          const SphereCol c(sg, team);
+          const SphereColOps c(sg, team);
 
           c.grad(buffers_v_i, state_w_i, data_n0);
           c.grad(buffers_grad_phinh_i, state_phinh_i, data_n0);
@@ -772,10 +774,10 @@ struct CaarFunctorImpl {
       const bool pgrad_correction = m_pgrad_correction;
       Kokkos::parallel_for(
         "caar compute v_tens",
-        SphereBlock::policy(m_num_elems, 6),
+        SphereBlockOps::policy(m_num_elems, 6),
         KOKKOS_LAMBDA(const Team &team) {
 
-          SphereBlock b(sg, team);
+          SphereBlockOps b(sg, team);
           const SphereBlockScratch ttmp0(b, 0.25 * (state_w_i(b.e,data_n0,b.x,b.y,b.z) * state_w_i(b.e,data_n0,b.x,b.y,b.z) + state_w_i(b.e,data_n0,b.x,b.y,b.z+1) * state_w_i(b.e,data_n0,b.x,b.y,b.z+1)));
 
           const Scalar exneriz = buffers_exner(b.e,b.x,b.y,b.z);
