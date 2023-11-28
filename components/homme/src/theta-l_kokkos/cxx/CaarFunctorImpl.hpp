@@ -196,12 +196,14 @@ KOKKOS_INLINE_FUNCTION SphereBlockScratch::SphereBlockScratch(const SphereBlock 
 }
 
 struct SphereCol {
-  const SphereGlobal &g;
   const Team &t;
+  Real scale_factor_inv;
+  Real dinv[2][2];
+  Real dvvx[NP];
+  Real dvvy[NP];
   int e,x,y,z;
 
-  KOKKOS_INLINE_FUNCTION SphereCol(const SphereGlobal &sg, const Team &team):
-    g(sg),
+  KOKKOS_INLINE_FUNCTION SphereCol(const Team &team):
     t(team)
   {
     const int lr = t.league_rank();
@@ -212,19 +214,30 @@ struct SphereCol {
     z = t.team_rank();
   }
 
+  KOKKOS_INLINE_FUNCTION SphereCol(const SphereGlobal &sg, const Team &team):
+    SphereCol(team)
+  {
+    scale_factor_inv = sg.scale_factor_inv;
+    for (int i = 0; i < 2; i++) for (int j = 0; j < 2; j++) dinv[i][j] = sg.dinv(e,i,j,x,y);
+    for (int j = 0; j < NP; j++) {
+      dvvx[j] = sg.dvv(x,j);
+      dvvy[j] = sg.dvv(y,j);
+    }
+  }
+
   template <typename OutView, typename InView>
   KOKKOS_INLINE_FUNCTION void grad(OutView &out, const InView &in, const int n) const
   {
     Scalar s0 = 0;
     Scalar s1 = 0;
     for (int j = 0; j < NP; j++) {
-      s0 += g.dvv(y,j) * in(e,n,x,j,z); 
-      s1 += g.dvv(x,j) * in(e,n,j,y,z);
+      s0 += dvvy[j] * in(e,n,x,j,z); 
+      s1 += dvvx[j] * in(e,n,j,y,z);
     }
-    s0 *= g.scale_factor_inv;
-    s1 *= g.scale_factor_inv;
-    out(e,0,x,y,z) = g.dinv(e,0,0,x,y) * s0 + g.dinv(e,0,1,x,y) * s1;
-    out(e,1,x,y,z) = g.dinv(e,1,0,x,y) * s0 + g.dinv(e,1,1,x,y) * s1;
+    s0 *= scale_factor_inv;
+    s1 *= scale_factor_inv;
+    out(e,0,x,y,z) = dinv[0][0] * s0 + dinv[0][1] * s1;
+    out(e,1,x,y,z) = dinv[1][0] * s0 + dinv[1][1] * s1;
   }
 
   static TeamPolicy policy(const int num_elems, const int num_lev)
@@ -833,7 +846,7 @@ struct CaarFunctorImpl {
         SphereCol::policy(m_num_elems, NUM_LEV),
         KOKKOS_LAMBDA(const Team &team) {
 
-          const SphereCol c(sg, team);
+          const SphereCol c(team);
 
           const Scalar spheremp = geometry_spheremp(c.e,c.x,c.y);
           const Scalar dt_spheremp = data_dt * spheremp;
