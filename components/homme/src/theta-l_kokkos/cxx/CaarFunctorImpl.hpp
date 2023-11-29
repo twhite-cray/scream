@@ -248,11 +248,11 @@ struct SphereColOps: SphereCol {
   }
 };
 
-struct SphereElemOps {
+struct SphereScanOps {
   const Team &t;
   int e,x,y;
 
-  KOKKOS_INLINE_FUNCTION SphereElemOps(const Team &team):
+  KOKKOS_INLINE_FUNCTION SphereScanOps(const Team &team):
     t(team)
   {
     e = t.league_rank();
@@ -689,11 +689,11 @@ struct CaarFunctorImpl {
       // compute_scan_quantities
       Kokkos::parallel_for(
         "caar compute scan_quantities",
-        SphereElemOps::policy(m_num_elems),
+        SphereScanOps::policy(m_num_elems),
         KOKKOS_LAMBDA(const Team &team) {
-          const SphereElemOps e(team);
-          e.scan(buffers_pi_i, state_dp3d, data_n0, pi_i00);
-          e.scan(buffers_w_tens, buffers_dp_tens, 0);
+          const SphereScanOps s(team);
+          s.scan(buffers_pi_i, state_dp3d, data_n0, pi_i00);
+          s.scan(buffers_w_tens, buffers_dp_tens, 0);
         });
 
       // compute_dp_and_theta_tens
