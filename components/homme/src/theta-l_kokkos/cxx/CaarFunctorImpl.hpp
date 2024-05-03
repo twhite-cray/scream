@@ -351,12 +351,15 @@ struct CaarFunctorImpl {
       auto &buffers_pi_i = m_buffers.dp_i;
       auto &buffers_dp_tens = m_buffers.dp_tens;
       auto &buffers_dpnh_dp_i = m_buffers.dpnh_dp_i;
+      auto buffers_div_vdp = viewAsReal(m_buffers.div_vdp);
+      auto &buffers_eta_dot_dpdn = m_buffers.eta_dot_dpdn;
       auto &buffers_exner = m_buffers.exner;
       auto &buffers_grad_phinh_i = m_buffers.grad_phinh_i;
       auto &buffers_phi_tens = m_buffers.phi_tens;
       auto &buffers_pnh = m_buffers.pnh;
       auto &buffers_theta_tens = m_buffers.theta_tens;
       auto &buffers_v_i = m_buffers.v_i;
+      auto buffers_vdp = viewAsReal(m_buffers.vdp);
       auto &buffers_v_tens = m_buffers.v_tens;
       auto &buffers_w_tens = m_buffers.w_tens;
 
@@ -382,9 +385,9 @@ struct CaarFunctorImpl {
 
       const SphereGlobal sg(m_sphere_ops);
 
-      auto &state_dp3d = m_state.m_dp3d;
+      auto state_dp3d = viewAsReal(m_state.m_dp3d);
       auto &state_phinh_i = m_state.m_phinh_i;
-      auto &state_v = m_state.m_v;
+      auto state_v = viewAsReal(m_state.m_v);
       auto &state_vtheta_dp = m_state.m_vtheta_dp;
       auto &state_w_i = m_state.m_w_i;
 
@@ -399,40 +402,26 @@ struct CaarFunctorImpl {
       // TREY
 
       Kokkos::parallel_for(
-        "caar compute div_vdp",
-        SphereBlockOps::policy(m_num_elems, 3),
+        "caar compute_div_vdp",
+        SphereBlockOps::policy(m_num_elems, 2),
         KOKKOS_LAMBDA(const Team &team) {
 
           SphereBlockOps b(sg, team);
           if (b.skip()) return;
 
-          const Scalar v0 = state_v(b.e,data_n0,0,b.x,b.y,b.z) * state_dp3d(b.e,data_n0,b.x,b.y,b.z);
-          const Scalar v1 = state_v(b.e,data_n0,1,b.x,b.y,b.z) * state_dp3d(b.e,data_n0,b.x,b.y,b.z);
+          const Real v0 = state_v(b.e,data_n0,0,b.x,b.y,b.z) * state_dp3d(b.e,data_n0,b.x,b.y,b.z);
+          const Real v1 = state_v(b.e,data_n0,1,b.x,b.y,b.z) * state_dp3d(b.e,data_n0,b.x,b.y,b.z);
+          buffers_vdp(b.e,0,b.x,b.y,b.z) = v0;
+          buffers_vdp(b.e,1,b.x,b.y,b.z) = v1;
 
-          derived_vn0(b.e,0,b.x,b.y,b.z) += data_eta_ave_w * v0;
-          derived_vn0(b.e,1,b.x,b.y,b.z) += data_eta_ave_w * v1;
-
-#if 0
           SphereBlockScratch ttmp0(b);
           SphereBlockScratch ttmp1(b);
           b.divInit(ttmp0, ttmp1, v0, v1);
-          const Scalar vtheta = state_vtheta_dp(b.e,data_n0,b.x,b.y,b.z) / state_dp3d(b.e,data_n0,b.x,b.y,b.z);
-          const SphereBlockScratch ttmp2(b, vtheta);
 
           b.barrier();
 
-          const Scalar dvdp = b.div(ttmp0, ttmp1);
-          buffers_dp_tens(b.e,b.x,b.y,b.z) = dvdp;
-
-          if (nonconservative_theta_advection) {
-            Scalar tt = dvdp * vtheta;
-            Scalar grad_tmp0, grad_tmp1;
-            b.grad(grad_tmp0, grad_tmp1, ttmp2);
-            tt += grad_tmp0 * v0 + grad_tmp1 * v1;
-            if (rsplit > 0)  buffers_theta_tens(b.e,b.x,b.y,b.z) = tt;
-            else buffers_theta_tens(b.e,b.x,b.y,b.z) += tt;
-          }
-#endif
+          const Real dvdp = b.div(ttmp0, ttmp1);
+          buffers_div_vdp(b.e,b.x,b.y,b.z) = dvdp;
         });
     }
 
@@ -468,7 +457,7 @@ struct CaarFunctorImpl {
     KernelVariables kv(team, m_tu);
 
     // =========== EPOCH 1 =========== //
-    compute_div_vdp(kv);
+    //compute_div_vdp(kv);
 
     // =========== EPOCH 2 =========== //
     kv.team_barrier();
@@ -939,10 +928,8 @@ struct CaarFunctorImpl {
         m_derived.m_omega_p(kv.ie,igp,jgp,ilev) +=
               m_data.eta_ave_w*m_buffers.omega_p(kv.team_idx,igp,jgp,ilev);
 
-#if 0
         m_derived.m_vn0(kv.ie,0,igp,jgp,ilev) += m_data.eta_ave_w*m_buffers.vdp(kv.team_idx,0,igp,jgp,ilev);
         m_derived.m_vn0(kv.ie,1,igp,jgp,ilev) += m_data.eta_ave_w*m_buffers.vdp(kv.team_idx,1,igp,jgp,ilev);
-#endif
       });
     });
   }
