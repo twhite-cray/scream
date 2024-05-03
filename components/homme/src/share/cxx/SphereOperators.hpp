@@ -1176,6 +1176,264 @@ public:
   Real m_scale_factor_inv, m_laplacian_rigid_factor;
 };
 
+using TeamPolicy = Kokkos::TeamPolicy<ExecSpace>;
+using Team = TeamPolicy::member_type;
+
+static constexpr int NPNP = NP * NP;
+static constexpr int WARP_SIZE = warpSize;
+
+static constexpr int SPHERE_BLOCK_LEV = WARP_SIZE;
+static constexpr int SPHERE_BLOCKS_PER_COL = (NUM_LEV - 1) / SPHERE_BLOCK_LEV + 1;
+static constexpr int SPHERE_BLOCK = NPNP * SPHERE_BLOCK_LEV;
+
+struct SphereGlobal {
+
+  const ExecViewManaged<const Real *[2][2][NP][NP]> d;
+  const ExecViewManaged<const Real *[2][2][NP][NP]> dinv;
+  const ExecViewManaged<const Real [NP][NP]> dvv;
+  const ExecViewManaged<const Real *[NP][NP]> metdet;
+  const Real scale_factor_inv;
+
+  SphereGlobal(const SphereOperators &op):
+    d(op.m_d),
+    dinv(op.m_dinv),
+    dvv(op.dvv),
+    metdet(op.m_metdet),
+    scale_factor_inv(op.m_scale_factor_inv)
+  {}
+};
+
+using SphereBlockScratchView = Kokkos::View<
+  Scalar[SPHERE_BLOCK_LEV][NP][NP],
+  ExecSpace::scratch_memory_space,
+  Kokkos::MemoryTraits<Kokkos::Unmanaged>
+  >;
+
+using SphereBlockScratchSubview = Kokkos::Subview<
+  SphereBlockScratchView, int,
+  std::remove_const_t<decltype(Kokkos::ALL)>,
+  std::remove_const_t<decltype(Kokkos::ALL)>
+  >;
+
+struct SphereBlockOps;
+
+struct SphereBlockScratch {
+  SphereBlockScratchView v;
+  SphereBlockScratchSubview sv;
+
+  KOKKOS_INLINE_FUNCTION SphereBlockScratch(const SphereBlockOps &b);
+  KOKKOS_INLINE_FUNCTION SphereBlockScratch(const SphereBlockOps &b, const Scalar val);
+
+  KOKKOS_INLINE_FUNCTION Scalar operator()(const int x, const int y) const
+  {
+    return sv(x,y);
+  }
+};
+
+struct SphereBlockOps {
+  const SphereGlobal &g;
+  const Team &t;
+  Real scale_factor_inv;
+  Real metdet;
+  Real rrdmd;
+  Real dinv[2][2];
+  Real dvvx[NP];
+  Real dvvy[NP];
+  int e,x,y,z;
+
+  KOKKOS_INLINE_FUNCTION SphereBlockOps(const SphereGlobal &sg, const Team &team):
+    g(sg),
+    t(team),
+    scale_factor_inv(g.scale_factor_inv),
+    rrdmd(0)
+  {
+    const int lr = t.league_rank();
+    e = lr / SPHERE_BLOCKS_PER_COL;
+    const int iw = lr % SPHERE_BLOCKS_PER_COL;
+    const int tr = t.team_rank();
+    const int ixy = tr / SPHERE_BLOCK_LEV;
+    x = ixy / NP;
+    y = ixy % NP;
+    const int dz = tr % SPHERE_BLOCK_LEV;
+    z = dz + iw * SPHERE_BLOCK_LEV;
+
+    metdet = g.metdet(e,x,y);
+    for (int i = 0; i < 2; i++) for (int j = 0; j < 2; j++) dinv[i][j] = g.dinv(e,i,j,x,y);
+    for (int j = 0; j < NP; j++) {
+      dvvx[j] = g.dvv(x,j);
+      dvvy[j] = g.dvv(y,j);
+    }
+  }
+
+  KOKKOS_INLINE_FUNCTION void barrier() const
+  {
+    t.team_barrier();
+  }
+
+  KOKKOS_INLINE_FUNCTION Scalar div(const SphereBlockScratch &t0, const SphereBlockScratch &t1)
+  {
+    Scalar duv = 0;
+    for (int j = 0; j < NP; j++) {
+      duv += dvvy[j] * t0(x,j) + dvvx[j] * t1(j,y);
+    }
+    if (rrdmd == 0) rrdmd = (1.0 / metdet) * scale_factor_inv;
+    return duv * rrdmd;
+  }
+
+  KOKKOS_INLINE_FUNCTION void divInit(SphereBlockScratch &t0, SphereBlockScratch &t1, const Scalar v0, const Scalar v1) const
+  {
+    t0.sv(x,y) = (dinv[0][0] * v0 + dinv[1][0] * v1) * metdet;
+    t1.sv(x,y) = (dinv[0][1] * v0 + dinv[1][1] * v1) * metdet;
+  }
+
+  KOKKOS_INLINE_FUNCTION void grad(Scalar &g0, Scalar &g1, const SphereBlockScratch &t) const
+  {
+    Scalar s0 = 0;
+    Scalar s1 = 0;
+    for (int j = 0; j < NP; j++) {
+      s0 += dvvy[j] * t(x,j);
+      s1 += dvvx[j] * t(j,y);
+    }
+    s0 *= scale_factor_inv;
+    s1 *= scale_factor_inv;
+    g0 = dinv[0][0] * s0 + dinv[0][1] * s1;
+    g1 = dinv[1][0] * s0 + dinv[1][1] * s1;
+  }
+
+  KOKKOS_INLINE_FUNCTION bool skip() const { return (z >= NUM_LEV); }
+
+  KOKKOS_INLINE_FUNCTION Scalar vort(const SphereBlockScratch &t0, const SphereBlockScratch &t1)
+  {
+    Scalar dvmdu = 0;
+    for (int j = 0; j < NP; j++) {
+      dvmdu += dvvy[j] * t1(x,j) - dvvx[j] * t0(j,y);
+    }
+    if (rrdmd == 0) rrdmd = (1.0 / metdet) * scale_factor_inv;
+    return dvmdu * rrdmd;
+  }
+
+  KOKKOS_INLINE_FUNCTION void vortInit(SphereBlockScratch &t0, SphereBlockScratch &t1, const Scalar v0, const Scalar v1) const
+  {
+    t0.sv(x,y) = g.d(e,0,0,x,y) * v0 + g.d(e,0,1,x,y) * v1;
+    t1.sv(x,y) = g.d(e,1,0,x,y) * v0 + g.d(e,1,1,x,y) * v1;
+  }
+
+  static TeamPolicy policy(const int num_elems, const int num_scratch)
+  {
+    return TeamPolicy(num_elems * SPHERE_BLOCKS_PER_COL, SPHERE_BLOCK).
+      set_scratch_size(0, Kokkos::PerTeam(num_scratch * SphereBlockScratchView::shmem_size()));
+  }
+
+};
+
+KOKKOS_INLINE_FUNCTION SphereBlockScratch::SphereBlockScratch(const SphereBlockOps &b):
+  v(b.t.team_scratch(0)),
+  sv(Kokkos::subview(v, b.z % SPHERE_BLOCK_LEV, Kokkos::ALL, Kokkos::ALL))
+{}
+
+KOKKOS_INLINE_FUNCTION SphereBlockScratch::SphereBlockScratch(const SphereBlockOps &b, const Scalar val):
+  SphereBlockScratch(b)
+{
+  sv(b.x,b.y) = val;
+}
+
+struct SphereCol {
+  const Team &t;
+  int e,x,y,z;
+
+  KOKKOS_INLINE_FUNCTION SphereCol(const Team &team):
+    t(team)
+  {
+    const int lr = t.league_rank();
+    e = lr / NPNP;
+    const int xy = lr % NPNP;
+    x = xy / NP;
+    y = xy % NP;
+    z = t.team_rank();
+  }
+  static TeamPolicy policy(const int num_elems, const int num_lev)
+  {
+    return TeamPolicy(num_elems * NPNP, num_lev);
+  }
+};
+
+struct SphereColOps: SphereCol {
+  Real scale_factor_inv;
+  Real dinv[2][2];
+  Real dvvx[NP];
+  Real dvvy[NP];
+
+  KOKKOS_INLINE_FUNCTION SphereColOps(const SphereGlobal &sg, const Team &team):
+    SphereCol(team)
+  {
+    scale_factor_inv = sg.scale_factor_inv;
+    for (int i = 0; i < 2; i++) for (int j = 0; j < 2; j++) dinv[i][j] = sg.dinv(e,i,j,x,y);
+    for (int j = 0; j < NP; j++) {
+      dvvx[j] = sg.dvv(x,j);
+      dvvy[j] = sg.dvv(y,j);
+    }
+  }
+
+  template <typename OutView, typename InView>
+  KOKKOS_INLINE_FUNCTION void grad(OutView &out, const InView &in, const int n) const
+  {
+    if (z >= NUM_LEV) return;
+    Scalar s0 = 0;
+    Scalar s1 = 0;
+    for (int j = 0; j < NP; j++) {
+      s0 += dvvy[j] * in(e,n,x,j,z); 
+      s1 += dvvx[j] * in(e,n,j,y,z);
+    }
+    s0 *= scale_factor_inv;
+    s1 *= scale_factor_inv;
+    out(e,0,x,y,z) = dinv[0][0] * s0 + dinv[0][1] * s1;
+    out(e,1,x,y,z) = dinv[1][0] * s0 + dinv[1][1] * s1;
+  }
+};
+
+struct SphereScanOps {
+  const Team &t;
+  int e,x,y;
+
+  KOKKOS_INLINE_FUNCTION SphereScanOps(const Team &team):
+    t(team)
+  {
+    e = t.league_rank();
+    const int tr = t.team_rank();
+    x = tr / NP;
+    y = tr % NP;
+  }
+
+  template <typename OutView, typename InView>
+  KOKKOS_INLINE_FUNCTION void scan(OutView &out, const InView &in, const Real zero) const
+  {
+    Kokkos::parallel_scan(
+      Kokkos::ThreadVectorRange(t, NUM_LEV),
+      [&](const int z, Scalar &sum, const bool last) {
+        if (z == 0) out(e,x,y,0) = sum = zero;
+        sum += in(e,x,y,z);
+        if (last) out(e,x,y,z+1) = sum;
+      });
+  }
+
+  template <typename OutView, typename InView>
+  KOKKOS_INLINE_FUNCTION void scan(OutView &out, const InView &in, const int n, const Real zero) const
+  {
+    Kokkos::parallel_scan(
+      Kokkos::ThreadVectorRange(t, NUM_LEV),
+      [&](const int z, Scalar &sum, const bool last) {
+        if (z == 0) out(e,x,y,0) = sum = zero;
+        sum += in(e,n,x,y,z);
+        if (last) out(e,x,y,z+1) = sum;
+      });
+  }
+
+  static TeamPolicy policy(const int num_elems)
+  {
+    return TeamPolicy(num_elems, NPNP, WARP_SIZE);
+  }
+};
+
 } // namespace Homme
 
 #endif // HOMMEXX_SPHERE_OPERATORS_HPP

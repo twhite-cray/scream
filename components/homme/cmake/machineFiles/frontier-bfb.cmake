@@ -51,7 +51,7 @@ SET(Extrae_LIBRARY "-I$ENV{CRAY_MPICH_DIR}/include -L$ENV{CRAY_MPICH_DIR}/lib -l
 
 SET(ADD_Fortran_FLAGS "-h flex_mp=intolerant -h thread0 -G2 ${Extrae_LIBRARY}" CACHE STRING "")
 SET(ADD_C_FLAGS "-g -O -ffp-model=strict ${Extrae_LIBRARY}" CACHE STRING "")
-SET(ADD_CXX_FLAGS "-g -std=c++14 -O -ffp-model=strict -munsafe-fp-atomics --offload-arch=gfx90a -fno-gpu-rdc ${Extrae_LIBRARY}" CACHE STRING "")
+SET(ADD_CXX_FLAGS "-g -std=c++14 -O -ffp-model=strict -munsafe-fp-atomics --offload-arch=gfx90a -fno-gpu-rdc -Wno-unused-command-line-argument -Wno-unsupported-floating-point-opt -Wno-#pragma-messages ${Extrae_LIBRARY}" CACHE STRING "")
 SET(ADD_LINKER_FLAGS "-g -O ${Extrae_LIBRARY}" CACHE STRING "")
 
 
