@@ -43,13 +43,14 @@ SET(Kokkos_ENABLE_EXPLICIT_INSTANTIATION OFF CACHE BOOL "")
 
 SET(CMAKE_C_COMPILER "cc" CACHE STRING "")
 SET(CMAKE_Fortran_COMPILER "ftn" CACHE STRING "")
+SET(CMAKE_Fortran_FLAGS "--gcc-toolchain=$ENV{MEMBERWORK}/cli115/workaround" CACHE STRING "")
 SET(CMAKE_CXX_COMPILER "hipcc" CACHE STRING "")
 
 #SET(MPICH_DIR "/opt/cray/pe/mpich/8.1.12/ofi/crayclang/10.0" CACHE STRING "")
 
 SET(Extrae_LIBRARY "-I$ENV{CRAY_MPICH_DIR}/include -L$ENV{CRAY_MPICH_DIR}/lib -lmpi $ENV{PE_MPICH_GTL_DIR_amd_gfx90a} $ENV{PE_MPICH_GTL_LIBS_amd_gfx90a}" CACHE STRING "")
 
-SET(ADD_Fortran_FLAGS "-h flex_mp=intolerant -h thread0 -G2 ${Extrae_LIBRARY}" CACHE STRING "")
+SET(ADD_Fortran_FLAGS "--gcc-toolchain=$ENV{MEMBERWORK}/cli115/workaround -h flex_mp=intolerant -h thread0 -G2 ${Extrae_LIBRARY}" CACHE STRING "")
 SET(ADD_C_FLAGS "-g -O -ffp-model=strict ${Extrae_LIBRARY}" CACHE STRING "")
 SET(ADD_CXX_FLAGS "-g -std=c++14 -O -ffp-model=strict -munsafe-fp-atomics --offload-arch=gfx90a -fno-gpu-rdc -Wno-unused-command-line-argument -Wno-unsupported-floating-point-opt -Wno-#pragma-messages ${Extrae_LIBRARY}" CACHE STRING "")
 SET(ADD_LINKER_FLAGS "-g -O ${Extrae_LIBRARY}" CACHE STRING "")
