@@ -450,12 +450,13 @@ struct CaarFunctorImpl {
           buffers_pi(b.e,b.x,b.y,b.z) = pi;
           const SphereBlockScratch tmp0(b, pi);
 
-          const Real omega = -0.5 * (buffers_omega_i(b.e,b.x,b.y,b.z) + buffers_omega_i(b.e,b.x,b.y,b.z+1));
-          buffers_omega_p(b.e,b.x,b.y,b.z) = omega;
-
           b.barrier();
 
           b.grad(buffers_grad_tmp(b.e,0,b.x,b.y,b.z), buffers_grad_tmp(b.e,1,b.x,b.y,b.z),tmp0);
+          Real omega = -0.5 * (buffers_omega_i(b.e,b.x,b.y,b.z) + buffers_omega_i(b.e,b.x,b.y,b.z+1));
+          omega += state_v(b.e,data_n0,0,b.x,b.y,b.z) * buffers_grad_tmp(b.e,0,b.x,b.y,b.z) + state_v(b.e,data_n0,1,b.x,b.y,b.z) * buffers_grad_tmp(b.e,1,b.x,b.y,b.z);
+          buffers_omega_p(b.e,b.x,b.y,b.z) = omega;
+
         });
       // TREY
     }
@@ -704,6 +705,7 @@ struct CaarFunctorImpl {
       const int igp = idx / NP;
       const int jgp = idx % NP;
 
+#if 0
       auto omega = Homme::subview(m_buffers.omega_p,kv.team_idx,igp,jgp);
       auto v = Homme::subview(m_state.m_v,kv.ie,m_data.n0);
       auto grad_pi = Homme::subview(m_buffers.grad_tmp,kv.team_idx);
@@ -712,6 +714,7 @@ struct CaarFunctorImpl {
         omega(ilev) += (v(0,igp,jgp,ilev)*grad_pi(0,igp,jgp,ilev) +
                         v(1,igp,jgp,ilev)*grad_pi(1,igp,jgp,ilev));
       });
+#endif
 
       // Use EOS to compute pnh/exner or exner/phi (depending on whether it's hydro mode).
       if (m_theta_hydrostatic_mode) {
