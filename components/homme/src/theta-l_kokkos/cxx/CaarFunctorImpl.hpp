@@ -354,6 +354,7 @@ struct CaarFunctorImpl {
       auto &buffers_eta_dot_dpdn = m_buffers.eta_dot_dpdn;
       auto &buffers_exner = m_buffers.exner;
       auto &buffers_grad_phinh_i = m_buffers.grad_phinh_i;
+      auto buffers_grad_tmp = viewAsReal(m_buffers.grad_tmp);
       auto buffers_omega_i = viewAsReal(m_buffers.w_tens);
       auto buffers_omega_p = viewAsReal(m_buffers.omega_p);
       auto &buffers_phi_tens = m_buffers.phi_tens;
@@ -425,7 +426,6 @@ struct CaarFunctorImpl {
           buffers_div_vdp(b.e,b.x,b.y,b.z) = dvdp;
         });
 
-      // TREY
 
       // compute_scan_quantities
       
@@ -448,10 +448,16 @@ struct CaarFunctorImpl {
 
           const Real pi = 0.5 * (buffers_pi_i(b.e,b.x,b.y,b.z) + buffers_pi_i(b.e,b.x,b.y,b.z+1));
           buffers_pi(b.e,b.x,b.y,b.z) = pi;
+          const SphereBlockScratch tmp0(b, pi);
 
           const Real omega = -0.5 * (buffers_omega_i(b.e,b.x,b.y,b.z) + buffers_omega_i(b.e,b.x,b.y,b.z+1));
           buffers_omega_p(b.e,b.x,b.y,b.z) = omega;
+
+          b.barrier();
+
+          b.grad(buffers_grad_tmp(b.e,0,b.x,b.y,b.z), buffers_grad_tmp(b.e,1,b.x,b.y,b.z),tmp0);
         });
+      // TREY
     }
 
     int nerr;
@@ -683,13 +689,13 @@ struct CaarFunctorImpl {
       auto omega = Homme::subview(m_buffers.omega_p,kv.team_idx,igp,jgp);
       ColumnOps::compute_midpoint_values<CombineMode::Scale>(kv,omega_i,omega,-1.0);
     });
-#endif
 
     kv.team_barrier();
 
     // Compute grad(pi)
     m_sphere_ops.gradient_sphere(kv,Homme::subview(m_buffers.pi,kv.team_idx),
                                     Homme::subview(m_buffers.grad_tmp,kv.team_idx));
+#endif // TREY
     kv.team_barrier();
 
     // Update omega with v*grad(p)
