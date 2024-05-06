@@ -192,7 +192,7 @@ struct CaarFunctorImpl {
     if (m_theta_hydrostatic_mode) {
       // pi=pnh, and no wtens/phitens
       num_scalar_mid_buf -= 1;
-      num_scalar_int_buf -= 3;
+      num_scalar_int_buf -= 2;
 
       // No grad_w_i/v_i
       num_vector_int_buf -= 2;
@@ -280,9 +280,9 @@ struct CaarFunctorImpl {
     if (!m_theta_hydrostatic_mode) {
       m_buffers.phi_tens     = decltype(m_buffers.phi_tens    )(mem,nslots);
       mem += m_buffers.phi_tens.size();
-      m_buffers.w_tens       = decltype(m_buffers.w_tens      )(mem,nslots);
-      mem += m_buffers.w_tens.size();
     }
+    m_buffers.w_tens       = decltype(m_buffers.w_tens      )(mem,nslots);
+    mem += m_buffers.w_tens.size();
 
     // Interface vectors
     if (!m_theta_hydrostatic_mode) {
@@ -348,21 +348,22 @@ struct CaarFunctorImpl {
     GPTLstart("caar compute");
 
     {
-      auto buffers_pi = viewAsReal(m_buffers.pi);
-      auto buffers_pi_i = viewAsReal(m_buffers.dp_i);
-      auto &buffers_dp_tens = m_buffers.dp_tens;
+      auto buffers_dp_tens = viewAsReal(m_buffers.dp_tens);
       auto &buffers_dpnh_dp_i = m_buffers.dpnh_dp_i;
       auto buffers_div_vdp = viewAsReal(m_buffers.div_vdp);
       auto &buffers_eta_dot_dpdn = m_buffers.eta_dot_dpdn;
       auto &buffers_exner = m_buffers.exner;
       auto &buffers_grad_phinh_i = m_buffers.grad_phinh_i;
+      auto buffers_omega_p = viewAsReal(m_buffers.omega_p);
       auto &buffers_phi_tens = m_buffers.phi_tens;
+      auto buffers_pi = viewAsReal(m_buffers.pi);
+      auto buffers_pi_i = viewAsReal(m_buffers.dp_i);
       auto &buffers_pnh = m_buffers.pnh;
       auto &buffers_theta_tens = m_buffers.theta_tens;
       auto &buffers_v_i = m_buffers.v_i;
       auto buffers_vdp = viewAsReal(m_buffers.vdp);
       auto &buffers_v_tens = m_buffers.v_tens;
-      auto &buffers_w_tens = m_buffers.w_tens;
+      auto buffers_w_tens = viewAsReal(m_buffers.w_tens);
 
       const Real data_dt = m_data.dt;
       const Real data_eta_ave_w = m_data.eta_ave_w;
@@ -434,6 +435,7 @@ struct CaarFunctorImpl {
         KOKKOS_LAMBDA(const Team &team) {
           const SphereScanOps s(team);
           s.scan(buffers_pi_i, state_dp3d, data_n0, pi_i00);
+          s.scan(buffers_w_tens, buffers_div_vdp, 0);
         });
 
       Kokkos::parallel_for(
@@ -647,7 +649,8 @@ struct CaarFunctorImpl {
       auto dp      = Homme::subview(m_state.m_dp3d,kv.ie,m_data.n0,igp,jgp);
       auto div_vdp = Homme::subview(m_buffers.div_vdp,kv.team_idx,igp,jgp);
       auto pi      = Homme::subview(m_buffers.pi,kv.team_idx,igp,jgp);
-      auto omega_i = Homme::subview(m_buffers.grad_phinh_i,kv.team_idx,0,igp,jgp);
+      //auto omega_i = Homme::subview(m_buffers.grad_phinh_i,kv.team_idx,0,igp,jgp);
+      auto omega_i = Homme::subview(m_buffers.w_tens,kv.team_idx,igp,jgp);
       //auto pi_i    = Homme::subview(m_buffers.grad_phinh_i,kv.team_idx,1,igp,jgp);
       auto pi_i    = Homme::subview(m_buffers.dp_i,kv.team_idx,igp,jgp);
 
@@ -660,7 +663,6 @@ struct CaarFunctorImpl {
       ColumnOps::column_scan_mid_to_int<true>(kv,dp,pi_i);
 
       ColumnOps::compute_midpoint_values(kv,pi_i,pi);
-#endif
 
       // Barrier so that the buffer shared by pi_i and omega_i is free for
       // omega_i to use.
@@ -672,6 +674,8 @@ struct CaarFunctorImpl {
       kv.team_barrier();
 
       ColumnOps::column_scan_mid_to_int<true>(kv,div_vdp,omega_i);
+#endif
+      kv.team_barrier();
       // Average omega_i to midpoints, and change sign, since later
       //   omega=v*grad(pi)-average(omega_i)
       auto omega = Homme::subview(m_buffers.omega_p,kv.team_idx,igp,jgp);
