@@ -354,6 +354,7 @@ struct CaarFunctorImpl {
       auto &buffers_eta_dot_dpdn = m_buffers.eta_dot_dpdn;
       auto &buffers_exner = m_buffers.exner;
       auto &buffers_grad_phinh_i = m_buffers.grad_phinh_i;
+      auto buffers_omega_i = viewAsReal(m_buffers.w_tens);
       auto buffers_omega_p = viewAsReal(m_buffers.omega_p);
       auto &buffers_phi_tens = m_buffers.phi_tens;
       auto buffers_pi = viewAsReal(m_buffers.pi);
@@ -363,7 +364,6 @@ struct CaarFunctorImpl {
       auto &buffers_v_i = m_buffers.v_i;
       auto buffers_vdp = viewAsReal(m_buffers.vdp);
       auto &buffers_v_tens = m_buffers.v_tens;
-      auto buffers_w_tens = viewAsReal(m_buffers.w_tens);
 
       const Real data_dt = m_data.dt;
       const Real data_eta_ave_w = m_data.eta_ave_w;
@@ -435,7 +435,7 @@ struct CaarFunctorImpl {
         KOKKOS_LAMBDA(const Team &team) {
           const SphereScanOps s(team);
           s.scan(buffers_pi_i, state_dp3d, data_n0, pi_i00);
-          s.scan(buffers_w_tens, buffers_div_vdp, 0);
+          s.scan(buffers_omega_i, buffers_div_vdp, 0);
         });
 
       Kokkos::parallel_for(
@@ -448,6 +448,9 @@ struct CaarFunctorImpl {
 
           const Real pi = 0.5 * (buffers_pi_i(b.e,b.x,b.y,b.z) + buffers_pi_i(b.e,b.x,b.y,b.z+1));
           buffers_pi(b.e,b.x,b.y,b.z) = pi;
+
+          const Real omega = -0.5 * (buffers_omega_i(b.e,b.x,b.y,b.z) + buffers_omega_i(b.e,b.x,b.y,b.z+1));
+          buffers_omega_p(b.e,b.x,b.y,b.z) = omega;
         });
     }
 
@@ -627,6 +630,7 @@ struct CaarFunctorImpl {
   bool compute_scan_quantities (KernelVariables &kv) const {
     bool ok = true;
     
+#if 0
     kv.team_barrier();
     Kokkos::parallel_for(Kokkos::TeamThreadRange(kv.team,NP*NP),
                          [&](const int idx) {
@@ -654,7 +658,6 @@ struct CaarFunctorImpl {
       //auto pi_i    = Homme::subview(m_buffers.grad_phinh_i,kv.team_idx,1,igp,jgp);
       auto pi_i    = Homme::subview(m_buffers.dp_i,kv.team_idx,igp,jgp);
 
-#if 0
       Kokkos::single(Kokkos::PerThread(kv.team),[&]() {
         pi_i(0)[0] = m_hvcoord.ps0*m_hvcoord.hybrid_ai0;
       });
@@ -674,13 +677,14 @@ struct CaarFunctorImpl {
       kv.team_barrier();
 
       ColumnOps::column_scan_mid_to_int<true>(kv,div_vdp,omega_i);
-#endif
       kv.team_barrier();
       // Average omega_i to midpoints, and change sign, since later
       //   omega=v*grad(pi)-average(omega_i)
       auto omega = Homme::subview(m_buffers.omega_p,kv.team_idx,igp,jgp);
       ColumnOps::compute_midpoint_values<CombineMode::Scale>(kv,omega_i,omega,-1.0);
     });
+#endif
+
     kv.team_barrier();
 
     // Compute grad(pi)
