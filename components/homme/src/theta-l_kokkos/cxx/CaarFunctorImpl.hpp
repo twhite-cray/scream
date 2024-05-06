@@ -202,7 +202,7 @@ struct CaarFunctorImpl {
       num_scalar_int_buf -=2;
       if (m_theta_hydrostatic_mode) {
         // No dp_i
-        num_scalar_int_buf -= 1;
+        //num_scalar_int_buf -= 1;
       }
     }
 
@@ -260,10 +260,10 @@ struct CaarFunctorImpl {
     mem += m_buffers.v_tens.size();
 
     // Interface scalars
-    if (!m_theta_hydrostatic_mode || m_rsplit==0) {
+    //if (!m_theta_hydrostatic_mode || m_rsplit==0) {
       m_buffers.dp_i = decltype(m_buffers.dp_i)(mem,nslots);
       mem += m_buffers.dp_i.size();
-    }
+    //}
 
     if (!m_theta_hydrostatic_mode) {
       m_buffers.dpnh_dp_i = decltype(m_buffers.dpnh_dp_i)(mem,nslots);
@@ -399,7 +399,6 @@ struct CaarFunctorImpl {
       const Real pi_i00 = m_hvcoord.ps0 * m_hvcoord.hybrid_ai0;
       const Real scale1_dt = m_data.scale1 * m_data.dt;
 
-      // TREY
 
       Kokkos::parallel_for(
         "caar compute_div_vdp",
@@ -422,6 +421,17 @@ struct CaarFunctorImpl {
 
           const Real dvdp = b.div(ttmp0, ttmp1);
           buffers_div_vdp(b.e,b.x,b.y,b.z) = dvdp;
+        });
+
+      // TREY
+
+      // compute_scan_quantities
+      Kokkos::parallel_for(
+        "caar compute scan_quantities",
+        SphereScanOps::policy(m_num_elems),
+        KOKKOS_LAMBDA(const Team &team) {
+          const SphereScanOps s(team);
+          s.scan(buffers_pi_i, state_dp3d, data_n0, pi_i00);
         });
     }
 
@@ -624,14 +634,17 @@ struct CaarFunctorImpl {
       auto div_vdp = Homme::subview(m_buffers.div_vdp,kv.team_idx,igp,jgp);
       auto pi      = Homme::subview(m_buffers.pi,kv.team_idx,igp,jgp);
       auto omega_i = Homme::subview(m_buffers.grad_phinh_i,kv.team_idx,0,igp,jgp);
-      auto pi_i    = Homme::subview(m_buffers.grad_phinh_i,kv.team_idx,1,igp,jgp);
+      //auto pi_i    = Homme::subview(m_buffers.grad_phinh_i,kv.team_idx,1,igp,jgp);
+      auto pi_i    = Homme::subview(m_buffers.dp_i,kv.team_idx,igp,jgp);
 
+#if 0
       Kokkos::single(Kokkos::PerThread(kv.team),[&]() {
         pi_i(0)[0] = m_hvcoord.ps0*m_hvcoord.hybrid_ai0;
       });
       kv.team_barrier();
 
       ColumnOps::column_scan_mid_to_int<true>(kv,dp,pi_i);
+#endif
 
       ColumnOps::compute_midpoint_values(kv,pi_i,pi);
 

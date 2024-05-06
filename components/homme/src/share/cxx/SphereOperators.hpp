@@ -1410,8 +1410,8 @@ struct SphereScanOps {
   template <typename OutView, typename InView>
   KOKKOS_INLINE_FUNCTION void scan(OutView &out, const InView &in, const Real zero) const
   {
-    Kokkos::parallel_scan(
-      Kokkos::ThreadVectorRange(t, NUM_PHYSICAL_LEV),
+    Dispatch<>::parallel_scan(
+      t, NUM_PHYSICAL_LEV,
       [&](const int z, Real &sum, const bool last) {
         if (z == 0) out(e,x,y,0) = sum = zero;
         sum += in(e,x,y,z);
@@ -1422,8 +1422,8 @@ struct SphereScanOps {
   template <typename OutView, typename InView>
   KOKKOS_INLINE_FUNCTION void scan(OutView &out, const InView &in, const int n, const Real zero) const
   {
-    Kokkos::parallel_scan(
-      Kokkos::ThreadVectorRange(t, NUM_PHYSICAL_LEV),
+    Dispatch<>::parallel_scan(
+      t, NUM_PHYSICAL_LEV,
       [&](const int z, Real &sum, const bool last) {
         if (z == 0) out(e,x,y,0) = sum = zero;
         sum += in(e,n,x,y,z);
