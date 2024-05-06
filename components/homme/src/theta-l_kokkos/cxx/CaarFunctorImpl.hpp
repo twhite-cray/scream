@@ -348,7 +348,8 @@ struct CaarFunctorImpl {
     GPTLstart("caar compute");
 
     {
-      auto &buffers_pi_i = m_buffers.dp_i;
+      auto buffers_pi = viewAsReal(m_buffers.pi);
+      auto buffers_pi_i = viewAsReal(m_buffers.dp_i);
       auto &buffers_dp_tens = m_buffers.dp_tens;
       auto &buffers_dpnh_dp_i = m_buffers.dpnh_dp_i;
       auto buffers_div_vdp = viewAsReal(m_buffers.div_vdp);
@@ -426,12 +427,25 @@ struct CaarFunctorImpl {
       // TREY
 
       // compute_scan_quantities
+      
       Kokkos::parallel_for(
-        "caar compute scan_quantities",
+        "caar compute_scan_quantities scans",
         SphereScanOps::policy(m_num_elems),
         KOKKOS_LAMBDA(const Team &team) {
           const SphereScanOps s(team);
           s.scan(buffers_pi_i, state_dp3d, data_n0, pi_i00);
+        });
+
+      Kokkos::parallel_for(
+        "caar compute_scan_quantities grad",
+        SphereBlockOps::policy(m_num_elems, 1),
+        KOKKOS_LAMBDA(const Team &team) {
+
+          SphereBlockOps b(sg, team);
+          if (b.skip()) return;
+
+          const Real pi = 0.5 * (buffers_pi_i(b.e,b.x,b.y,b.z) + buffers_pi_i(b.e,b.x,b.y,b.z+1));
+          buffers_pi(b.e,b.x,b.y,b.z) = pi;
         });
     }
 
@@ -644,9 +658,9 @@ struct CaarFunctorImpl {
       kv.team_barrier();
 
       ColumnOps::column_scan_mid_to_int<true>(kv,dp,pi_i);
-#endif
 
       ColumnOps::compute_midpoint_values(kv,pi_i,pi);
+#endif
 
       // Barrier so that the buffer shared by pi_i and omega_i is free for
       // omega_i to use.
