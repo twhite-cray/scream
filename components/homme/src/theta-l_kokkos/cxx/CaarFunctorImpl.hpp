@@ -445,25 +445,19 @@ struct CaarFunctorImpl {
         KOKKOS_LAMBDA(const Team &team) {
 
           SphereBlockOps b(sg, team);
+          if (b.skip()) return;
 
-          Real pi = 0;
-          if (!b.skip()) {
-            pi = 0.5 * (buffers_pi_i(b.e,b.x,b.y,b.z) + buffers_pi_i(b.e,b.x,b.y,b.z+1));
-            if (theta_hydrostatic_mode) buffers_pnh(b.e,b.x,b.y,b.z) = pi;
-          }
+          const Real pi = 0.5 * (buffers_pi_i(b.e,b.x,b.y,b.z) + buffers_pi_i(b.e,b.x,b.y,b.z+1));
           const SphereBlockScratch tmp0(b, pi);
+          if (theta_hydrostatic_mode) buffers_pnh(b.e,b.x,b.y,b.z) = pi;
           b.barrier();
 
-          if (!b.skip()) {
+          Real grad0, grad1;
+          b.grad(grad0, grad1, tmp0);
 
-            Real grad0, grad1;
-            b.grad(grad0, grad1, tmp0);
-
-            Real omega = -0.5 * (buffers_omega_i(b.e,b.x,b.y,b.z) + buffers_omega_i(b.e,b.x,b.y,b.z+1));
-            omega += state_v(b.e,data_n0,0,b.x,b.y,b.z) * grad0 + state_v(b.e,data_n0,1,b.x,b.y,b.z) * grad1;
-            buffers_omega_p(b.e,b.x,b.y,b.z) = omega;
-          }
-
+          Real omega = -0.5 * (buffers_omega_i(b.e,b.x,b.y,b.z) + buffers_omega_i(b.e,b.x,b.y,b.z+1));
+          omega += state_v(b.e,data_n0,0,b.x,b.y,b.z) * grad0 + state_v(b.e,data_n0,1,b.x,b.y,b.z) * grad1;
+          buffers_omega_p(b.e,b.x,b.y,b.z) = omega;
         });
       // TREY
     }
