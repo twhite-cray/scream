@@ -360,7 +360,7 @@ struct CaarFunctorImpl {
       auto &buffers_phi_tens = m_buffers.phi_tens;
       auto buffers_pi = viewAsReal(m_buffers.pi);
       auto buffers_pi_i = viewAsReal(m_buffers.dp_i);
-      auto &buffers_pnh = m_buffers.pnh;
+      auto buffers_pnh = viewAsReal(m_buffers.pnh);
       auto &buffers_theta_tens = m_buffers.theta_tens;
       auto &buffers_v_i = m_buffers.v_i;
       auto buffers_vdp = viewAsReal(m_buffers.vdp);
@@ -383,6 +383,7 @@ struct CaarFunctorImpl {
       auto &geometry_gradphis = m_geometry.m_gradphis;
       auto &geometry_spheremp = m_geometry.m_spheremp;
 
+      const bool theta_hydrostatic_mode = m_theta_hydrostatic_mode;
       const bool nonconservative_theta_advection = (m_theta_advection_form == AdvectionForm::NonConservative);
       const int rsplit = m_rsplit;
 
@@ -444,18 +445,24 @@ struct CaarFunctorImpl {
         KOKKOS_LAMBDA(const Team &team) {
 
           SphereBlockOps b(sg, team);
-          if (b.skip()) return;
 
-          const Real pi = 0.5 * (buffers_pi_i(b.e,b.x,b.y,b.z) + buffers_pi_i(b.e,b.x,b.y,b.z+1));
-          buffers_pi(b.e,b.x,b.y,b.z) = pi;
+          Real pi = 0;
+          if (!b.skip()) {
+            pi = 0.5 * (buffers_pi_i(b.e,b.x,b.y,b.z) + buffers_pi_i(b.e,b.x,b.y,b.z+1));
+            if (theta_hydrostatic_mode) buffers_pnh(b.e,b.x,b.y,b.z) = pi;
+          }
           const SphereBlockScratch tmp0(b, pi);
-
           b.barrier();
 
-          b.grad(buffers_grad_tmp(b.e,0,b.x,b.y,b.z), buffers_grad_tmp(b.e,1,b.x,b.y,b.z),tmp0);
-          Real omega = -0.5 * (buffers_omega_i(b.e,b.x,b.y,b.z) + buffers_omega_i(b.e,b.x,b.y,b.z+1));
-          omega += state_v(b.e,data_n0,0,b.x,b.y,b.z) * buffers_grad_tmp(b.e,0,b.x,b.y,b.z) + state_v(b.e,data_n0,1,b.x,b.y,b.z) * buffers_grad_tmp(b.e,1,b.x,b.y,b.z);
-          buffers_omega_p(b.e,b.x,b.y,b.z) = omega;
+          if (!b.skip()) {
+
+            Real grad0, grad1;
+            b.grad(grad0, grad1, tmp0);
+
+            Real omega = -0.5 * (buffers_omega_i(b.e,b.x,b.y,b.z) + buffers_omega_i(b.e,b.x,b.y,b.z+1));
+            omega += state_v(b.e,data_n0,0,b.x,b.y,b.z) * grad0 + state_v(b.e,data_n0,1,b.x,b.y,b.z) * grad1;
+            buffers_omega_p(b.e,b.x,b.y,b.z) = omega;
+          }
 
         });
       // TREY
