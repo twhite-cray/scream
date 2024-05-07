@@ -439,6 +439,8 @@ struct CaarFunctorImpl {
           s.scan(buffers_omega_i, buffers_div_vdp, 0);
         });
 
+      // TREY
+
       Kokkos::parallel_for(
         "caar compute_scan_quantities grad",
         SphereBlockOps::policy(m_num_elems, 1),
@@ -449,7 +451,14 @@ struct CaarFunctorImpl {
 
           const Real pi = 0.5 * (buffers_pi_i(b.e,b.x,b.y,b.z) + buffers_pi_i(b.e,b.x,b.y,b.z+1));
           const SphereBlockScratch tmp0(b, pi);
-          if (theta_hydrostatic_mode) buffers_pnh(b.e,b.x,b.y,b.z) = pi;
+
+          if (theta_hydrostatic_mode) {
+            buffers_pnh(b.e,b.x,b.y,b.z) = pi;
+            Real exner = pi;
+            EquationOfState::pressure_to_exner(exner);
+            buffers_exner(b.e,b.x,b.y,b.z) = exner;
+          }
+
           b.barrier();
 
           Real grad0, grad1;
@@ -459,7 +468,7 @@ struct CaarFunctorImpl {
           omega += state_v(b.e,data_n0,0,b.x,b.y,b.z) * grad0 + state_v(b.e,data_n0,1,b.x,b.y,b.z) * grad1;
           buffers_omega_p(b.e,b.x,b.y,b.z) = omega;
         });
-      // TREY
+
     }
 
     int nerr;
@@ -719,9 +728,11 @@ struct CaarFunctorImpl {
 
       // Use EOS to compute pnh/exner or exner/phi (depending on whether it's hydro mode).
       if (m_theta_hydrostatic_mode) {
+#if 0
         // Recall that, in this case, pnh aliases pi, and pi was already computed
         m_eos.compute_exner(kv,Homme::subview(m_buffers.pnh,kv.team_idx,igp,jgp),
                                Homme::subview(m_buffers.exner,kv.team_idx,igp,jgp));
+#endif
 
         m_eos.compute_phi_i(kv, m_geometry.m_phis(kv.ie,igp,jgp),
                             Homme::subview(m_state.m_vtheta_dp,kv.ie,m_data.n0,igp,jgp),
