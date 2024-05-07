@@ -382,6 +382,7 @@ struct CaarFunctorImpl {
       auto &geometry_fcor = m_geometry.m_fcor;
       auto &geometry_gradphis = m_geometry.m_gradphis;
       auto &geometry_spheremp = m_geometry.m_spheremp;
+      auto &geometry_phis = m_geometry.m_phis;
 
       const bool theta_hydrostatic_mode = m_theta_hydrostatic_mode;
       const bool nonconservative_theta_advection = (m_theta_advection_form == AdvectionForm::NonConservative);
@@ -392,7 +393,7 @@ struct CaarFunctorImpl {
       auto state_dp3d = viewAsReal(m_state.m_dp3d);
       auto &state_phinh_i = m_state.m_phinh_i;
       auto state_v = viewAsReal(m_state.m_v);
-      auto &state_vtheta_dp = m_state.m_vtheta_dp;
+      auto state_vtheta_dp = viewAsReal(m_state.m_vtheta_dp);
       auto &state_w_i = m_state.m_w_i;
 
       constexpr Real div1mkappa = 1.0 / (1.0 - PhysicalConstants::kappa);
@@ -453,10 +454,10 @@ struct CaarFunctorImpl {
           const SphereBlockScratch tmp0(b, pi);
 
           if (theta_hydrostatic_mode) {
-            buffers_pnh(b.e,b.x,b.y,b.z) = pi;
             Real exner = pi;
             EquationOfState::pressure_to_exner(exner);
             buffers_exner(b.e,b.x,b.y,b.z) = exner;
+            buffers_pnh(b.e,b.x,b.y,b.z) = EquationOfState::compute_dphi(state_vtheta_dp(b.e,data_n0,b.x,b.y,b.z),exner,pi);
           }
 
           b.barrier();
@@ -468,7 +469,6 @@ struct CaarFunctorImpl {
           omega += state_v(b.e,data_n0,0,b.x,b.y,b.z) * grad0 + state_v(b.e,data_n0,1,b.x,b.y,b.z) * grad1;
           buffers_omega_p(b.e,b.x,b.y,b.z) = omega;
         });
-
     }
 
     int nerr;
@@ -732,8 +732,8 @@ struct CaarFunctorImpl {
         // Recall that, in this case, pnh aliases pi, and pi was already computed
         m_eos.compute_exner(kv,Homme::subview(m_buffers.pnh,kv.team_idx,igp,jgp),
                                Homme::subview(m_buffers.exner,kv.team_idx,igp,jgp));
-#endif
 
+#endif
         m_eos.compute_phi_i(kv, m_geometry.m_phis(kv.ie,igp,jgp),
                             Homme::subview(m_state.m_vtheta_dp,kv.ie,m_data.n0,igp,jgp),
                             Homme::subview(m_buffers.exner,kv.team_idx,igp,jgp),
