@@ -391,7 +391,7 @@ struct CaarFunctorImpl {
       const SphereGlobal sg(m_sphere_ops);
 
       auto state_dp3d = viewAsReal(m_state.m_dp3d);
-      auto &state_phinh_i = m_state.m_phinh_i;
+      auto state_phinh_i = viewAsReal(m_state.m_phinh_i);
       auto state_v = viewAsReal(m_state.m_v);
       auto state_vtheta_dp = viewAsReal(m_state.m_vtheta_dp);
       auto &state_w_i = m_state.m_w_i;
@@ -469,6 +469,17 @@ struct CaarFunctorImpl {
           omega += state_v(b.e,data_n0,0,b.x,b.y,b.z) * grad0 + state_v(b.e,data_n0,1,b.x,b.y,b.z) * grad1;
           buffers_omega_p(b.e,b.x,b.y,b.z) = omega;
         });
+
+      if (theta_hydrostatic_mode) {
+        Kokkos::parallel_for(
+          "caar compute_phi_i",
+          SphereScanOps::policy(m_num_elems),
+          KOKKOS_LAMBDA(const Team &team) {
+            const SphereScanOps s(team);
+            s.nacs(state_phinh_i, data_n0, buffers_pnh, geometry_phis);
+          });
+      }
+
     }
 
     int nerr;
@@ -733,12 +744,12 @@ struct CaarFunctorImpl {
         m_eos.compute_exner(kv,Homme::subview(m_buffers.pnh,kv.team_idx,igp,jgp),
                                Homme::subview(m_buffers.exner,kv.team_idx,igp,jgp));
 
-#endif
         m_eos.compute_phi_i(kv, m_geometry.m_phis(kv.ie,igp,jgp),
                             Homme::subview(m_state.m_vtheta_dp,kv.ie,m_data.n0,igp,jgp),
                             Homme::subview(m_buffers.exner,kv.team_idx,igp,jgp),
                             Homme::subview(m_buffers.pnh,kv.team_idx,igp,jgp),
                             Homme::subview(m_state.m_phinh_i,kv.ie,m_data.n0,igp,jgp));
+#endif
       } else {
         const bool ok1 =
         m_eos.compute_pnh_and_exner(kv,

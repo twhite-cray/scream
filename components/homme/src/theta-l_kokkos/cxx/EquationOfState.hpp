@@ -245,8 +245,7 @@ public:
       return Rgas*vtheta_dp(ilev)*exner(ilev)/p(ilev);
     };
 
-    //ColumnOps::column_scan_mid_to_int<false>(kv,integrand_provider,phi_i);
-    ColumnOps::column_scan_mid_to_int<false>(kv,p,phi_i);
+    ColumnOps::column_scan_mid_to_int<false>(kv,integrand_provider,phi_i);
   }
 
   KOKKOS_INLINE_FUNCTION static
