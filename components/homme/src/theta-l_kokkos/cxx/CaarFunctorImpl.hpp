@@ -352,7 +352,7 @@ struct CaarFunctorImpl {
       auto &buffers_dpnh_dp_i = m_buffers.dpnh_dp_i;
       auto buffers_div_vdp = viewAsReal(m_buffers.div_vdp);
       auto &buffers_eta_dot_dpdn = m_buffers.eta_dot_dpdn;
-      auto &buffers_exner = m_buffers.exner;
+      auto buffers_exner = viewAsReal(m_buffers.exner);
       auto &buffers_grad_phinh_i = m_buffers.grad_phinh_i;
       auto buffers_grad_tmp = viewAsReal(m_buffers.grad_tmp);
       auto buffers_omega_i = viewAsReal(m_buffers.w_tens);
@@ -454,10 +454,19 @@ struct CaarFunctorImpl {
           const SphereBlockScratch tmp0(b, pi);
 
           if (theta_hydrostatic_mode) {
+
             Real exner = pi;
             EquationOfState::pressure_to_exner(exner);
             buffers_exner(b.e,b.x,b.y,b.z) = exner;
-            buffers_pnh(b.e,b.x,b.y,b.z) = EquationOfState::compute_dphi(state_vtheta_dp(b.e,data_n0,b.x,b.y,b.z),exner,pi);
+            buffers_pnh(b.e,b.x,b.y,b.z) = EquationOfState::compute_dphi(state_vtheta_dp(b.e,data_n0,b.x,b.y,b.z), exner, pi);
+
+          } else {
+
+            const Real dphi = state_phinh_i(b.e,data_n0,b.x,b.y,b.z+1) - state_phinh_i(b.e,data_n0,b.x,b.y,b.z);
+            const Real vtheta_dp = state_vtheta_dp(b.e,data_n0,b.x,b.y,b.z);
+            if ((vtheta_dp < 0) || (dphi > 0)) abort();
+            EquationOfState::compute_pnh_and_exner(vtheta_dp, dphi, buffers_pnh(b.e,b.x,b.y,b.z), buffers_exner(b.e,b.x,b.y,b.z));
+
           }
 
           b.barrier();
@@ -735,11 +744,9 @@ struct CaarFunctorImpl {
         omega(ilev) += (v(0,igp,jgp,ilev)*grad_pi(0,igp,jgp,ilev) +
                         v(1,igp,jgp,ilev)*grad_pi(1,igp,jgp,ilev));
       });
-#endif
 
       // Use EOS to compute pnh/exner or exner/phi (depending on whether it's hydro mode).
       if (m_theta_hydrostatic_mode) {
-#if 0
         // Recall that, in this case, pnh aliases pi, and pi was already computed
         m_eos.compute_exner(kv,Homme::subview(m_buffers.pnh,kv.team_idx,igp,jgp),
                                Homme::subview(m_buffers.exner,kv.team_idx,igp,jgp));
@@ -749,7 +756,6 @@ struct CaarFunctorImpl {
                             Homme::subview(m_buffers.exner,kv.team_idx,igp,jgp),
                             Homme::subview(m_buffers.pnh,kv.team_idx,igp,jgp),
                             Homme::subview(m_state.m_phinh_i,kv.ie,m_data.n0,igp,jgp));
-#endif
       } else {
         const bool ok1 =
         m_eos.compute_pnh_and_exner(kv,
@@ -759,6 +765,7 @@ struct CaarFunctorImpl {
                                     Homme::subview(m_buffers.exner,kv.team_idx,igp,jgp));
         if ( ! ok1) ok = false;
       }
+#endif
 
       // Compute phi at midpoints
       ColumnOps::compute_midpoint_values(kv,Homme::subview(m_state.m_phinh_i,kv.ie,m_data.n0,igp,jgp),
