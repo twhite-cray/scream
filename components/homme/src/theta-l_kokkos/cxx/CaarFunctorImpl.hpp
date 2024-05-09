@@ -351,6 +351,7 @@ struct CaarFunctorImpl {
       auto buffers_dp_tens = viewAsReal(m_buffers.dp_tens);
       auto &buffers_dpnh_dp_i = m_buffers.dpnh_dp_i;
       auto buffers_div_vdp = viewAsReal(m_buffers.div_vdp);
+      auto buffers_dp_i = viewAsReal(m_buffers.dp_i);
       auto &buffers_eta_dot_dpdn = m_buffers.eta_dot_dpdn;
       auto buffers_exner = viewAsReal(m_buffers.exner);
       auto &buffers_grad_phinh_i = m_buffers.grad_phinh_i;
@@ -360,7 +361,6 @@ struct CaarFunctorImpl {
       auto buffers_phi = viewAsReal(m_buffers.phi);
       auto &buffers_phi_tens = m_buffers.phi_tens;
       auto buffers_pi = viewAsReal(m_buffers.pi);
-      auto buffers_pi_i = viewAsReal(m_buffers.dp_i);
       auto buffers_pnh = viewAsReal(m_buffers.pnh);
       auto &buffers_theta_tens = m_buffers.theta_tens;
       auto &buffers_v_i = m_buffers.v_i;
@@ -437,11 +437,9 @@ struct CaarFunctorImpl {
         SphereScanOps::policy(m_num_elems),
         KOKKOS_LAMBDA(const Team &team) {
           const SphereScanOps s(team);
-          s.scan(buffers_pi_i, state_dp3d, data_n0, pi_i00);
+          s.scan(buffers_dp_i, state_dp3d, data_n0, pi_i00);
           s.scan(buffers_omega_i, buffers_div_vdp, 0);
         });
-
-      // TREY
 
       Kokkos::parallel_for(
         "caar compute_scan_quantities grad",
@@ -451,7 +449,7 @@ struct CaarFunctorImpl {
           SphereBlockOps b(sg, team);
           if (b.skip()) return;
 
-          const Real pi = 0.5 * (buffers_pi_i(b.e,b.x,b.y,b.z) + buffers_pi_i(b.e,b.x,b.y,b.z+1));
+          const Real pi = 0.5 * (buffers_dp_i(b.e,b.x,b.y,b.z) + buffers_dp_i(b.e,b.x,b.y,b.z+1));
           const SphereBlockScratch tmp0(b, pi);
 
           if (theta_hydrostatic_mode) {
@@ -494,6 +492,23 @@ struct CaarFunctorImpl {
                 buffers_phi(s.e,s.x,s.y,z) = 0.5 * (state_phinh_i(s.e,data_n0,s.x,s.y,z) + state_phinh_i(s.e,data_n0,s.x,s.y,z+1));
               });
           });
+      }
+
+      // compute_interface_quantities
+      // TREY
+      if ((rsplit == 0) || !theta_hydrostatic_mode) {
+
+          Kokkos::parallel_for(
+            "caar compute_interface_quantities",
+            SphereColOps::policy(m_num_elems, NUM_INTERFACE_LEV),
+            KOKKOS_LAMBDA(const Team &team) {
+
+              const SphereColOps c(sg, team);
+
+              const int zm = (c.z > 0) ? c.z-1 : 0;
+              const int zp = (c.z < NUM_PHYSICAL_LEV) ? c.z : NUM_PHYSICAL_LEV-1;
+              buffers_dp_i(c.e,c.x,c.y,c.z) = 0.5 * (state_dp3d(c.e,data_n0,c.x,c.y,zm) + state_dp3d(c.e,data_n0,c.x,c.y,zp));
+            });
       }
 
     }
@@ -790,8 +805,12 @@ struct CaarFunctorImpl {
       auto dp   = Homme::subview(m_state.m_dp3d,kv.ie,m_data.n0,igp,jgp);
       auto dp_i = Homme::subview(m_buffers.dp_i,kv.team_idx,igp,jgp);
 
+      //TREY
+
+#if 0
       // Compute interface dp
       ColumnOps::compute_interface_values(kv.team,dp,dp_i);
+#endif
 
       if (!m_theta_hydrostatic_mode) {
         auto u    = Homme::subview(m_state.m_v,kv.ie,m_data.n0,0,igp,jgp);
