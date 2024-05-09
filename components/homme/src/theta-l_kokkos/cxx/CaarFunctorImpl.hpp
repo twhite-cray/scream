@@ -518,6 +518,10 @@ struct CaarFunctorImpl {
                 const Real2 v1 = c.neighbors(data_n0, 1, state_v);
                 const Real v_i1 = c.weighted(v1, dp);
                 buffers_v_i(c.e,1,c.x,c.y,c.z) = v_i1;
+
+                const Real pm = (c.z == 0) ? pi_i00 : buffers_pnh(c.e,c.x,c.y,c.z-1);
+                const Real pz = (c.z == NUM_PHYSICAL_LEV) ? pm + 0.5 * dp.x : buffers_pnh(c.e,c.x,c.y,c.z);
+                buffers_dpnh_dp_i(c.e,c.x,c.y,c.z) = 2.0 * (pz - pm) / (dp.x + dp.y);
               }
 
             });
@@ -822,7 +826,6 @@ struct CaarFunctorImpl {
 #if 0
       // Compute interface dp
       ColumnOps::compute_interface_values(kv.team,dp,dp_i);
-#endif
 
       if (!m_theta_hydrostatic_mode) {
         auto u    = Homme::subview(m_state.m_v,kv.ie,m_data.n0,0,igp,jgp);
@@ -831,10 +834,8 @@ struct CaarFunctorImpl {
         // Compute interface horiz velocity
         auto u_i  = Homme::subview(m_buffers.v_i,kv.team_idx,0,igp,jgp);
         auto v_i  = Homme::subview(m_buffers.v_i,kv.team_idx,1,igp,jgp);
-#if 0
         ColumnOps::compute_interface_values(kv.team,dp,dp_i,u,u_i);
         ColumnOps::compute_interface_values(kv.team,dp,dp_i,v,v_i);
-#endif
 
         // grad_phinh_i is yet to be computed, so the buffer is available
         auto dpnh_dp_i = Homme::subview(m_buffers.dpnh_dp_i,kv.team_idx,igp,jgp);
@@ -843,6 +844,7 @@ struct CaarFunctorImpl {
                                    dp_i,
                                    dpnh_dp_i);
       }
+#endif
 
       if (m_rsplit==0) {
         // Shorter names, to keep a call to ColumnOps a bit shorter
