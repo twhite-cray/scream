@@ -363,7 +363,7 @@ struct CaarFunctorImpl {
       auto buffers_pi = viewAsReal(m_buffers.pi);
       auto buffers_pnh = viewAsReal(m_buffers.pnh);
       auto &buffers_theta_tens = m_buffers.theta_tens;
-      auto &buffers_v_i = m_buffers.v_i;
+      auto buffers_v_i = viewAsReal(m_buffers.v_i);
       auto buffers_vdp = viewAsReal(m_buffers.vdp);
       auto &buffers_v_tens = m_buffers.v_tens;
 
@@ -505,9 +505,24 @@ struct CaarFunctorImpl {
 
               const SphereColOps c(sg, team);
 
-              const int zm = (c.z > 0) ? c.z-1 : 0;
-              const int zp = (c.z < NUM_PHYSICAL_LEV) ? c.z : NUM_PHYSICAL_LEV-1;
-              buffers_dp_i(c.e,c.x,c.y,c.z) = 0.5 * (state_dp3d(c.e,data_n0,c.x,c.y,zm) + state_dp3d(c.e,data_n0,c.x,c.y,zp));
+              const Real dm = (c.z > 0) ? state_dp3d(c.e,data_n0,c.x,c.y,c.z-1) : 0;
+              const Real dz = (c.z < NUM_PHYSICAL_LEV) ? state_dp3d(c.e,data_n0,c.x,c.y,c.z) : 0;
+              const Real dp_i = (c.z == 0) ? dz : (c.z == NUM_PHYSICAL_LEV) ? dm : 0.5 * (dz + dm);
+              buffers_dp_i(c.e,c.x,c.y,c.z) = dp_i;
+
+              if (!theta_hydrostatic_mode) {
+
+                const Real v0m = (c.z > 0) ? state_v(c.e,data_n0,0,c.x,c.y,c.z-1) : 0;
+                const Real v0z = (c.z < NUM_PHYSICAL_LEV) ? state_v(c.e,data_n0,0,c.x,c.y,c.z) : 0;
+                const Real v_i0 = (c.z == 0) ? v0z : (c.z == NUM_PHYSICAL_LEV) ? v0m : (dz * v0z + dm * v0m) / (2.0 * dp_i);
+                buffers_v_i(c.e,0,c.x,c.y,c.z) = v_i0;
+
+                const Real v1m = (c.z > 0) ? state_v(c.e,data_n0,1,c.x,c.y,c.z-1) : 0;
+                const Real v1z = (c.z < NUM_PHYSICAL_LEV) ? state_v(c.e,data_n0,1,c.x,c.y,c.z) : 0;
+                const Real v_i1 = (c.z == 0) ? v1z : (c.z == NUM_PHYSICAL_LEV) ? v1m :(dz * v1z + dm * v1m) / (2.0 * dp_i);
+                buffers_v_i(c.e,1,c.x,c.y,c.z) = v_i1;
+              }
+
             });
       }
 
@@ -819,8 +834,10 @@ struct CaarFunctorImpl {
         // Compute interface horiz velocity
         auto u_i  = Homme::subview(m_buffers.v_i,kv.team_idx,0,igp,jgp);
         auto v_i  = Homme::subview(m_buffers.v_i,kv.team_idx,1,igp,jgp);
+#if 0
         ColumnOps::compute_interface_values(kv.team,dp,dp_i,u,u_i);
         ColumnOps::compute_interface_values(kv.team,dp,dp_i,v,v_i);
+#endif
 
         // grad_phinh_i is yet to be computed, so the buffer is available
         auto dpnh_dp_i = Homme::subview(m_buffers.dpnh_dp_i,kv.team_idx,igp,jgp);
