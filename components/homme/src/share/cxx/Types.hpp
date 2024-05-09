@@ -23,6 +23,7 @@ namespace Homme {
 
 // Usual typedef for real scalar type
 using Real = double;
+using Real2 = double2;
 using RCPtr = Real *const;
 using CRCPtr = const Real *const;
 using F90Ptr = Real *const; // Using this in a function signature emphasizes
