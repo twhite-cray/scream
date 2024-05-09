@@ -1407,6 +1407,19 @@ struct SphereScanOps {
     y = tr % NP;
   }
 
+  template <typename OutView, typename InView, typename EndView>
+  KOKKOS_INLINE_FUNCTION void nacs(OutView &out, const int n, const InView &in, const EndView &end) const
+  {
+    Dispatch<>::parallel_scan(
+      t, NUM_PHYSICAL_LEV,
+      [&](const int a, Real &sum, const bool last) {
+        if (a == 0) out(e,n,x,y,NUM_PHYSICAL_LEV) = sum = end(e,x,y);
+        const int z = NUM_PHYSICAL_LEV-a-1;
+        sum += in(e,x,y,z);
+        if (last) out(e,n,x,y,z) = sum;
+      });
+  }
+
   template <typename OutView, typename InView>
   KOKKOS_INLINE_FUNCTION void scan(OutView &out, const InView &in, const Real zero) const
   {

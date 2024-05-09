@@ -357,6 +357,7 @@ struct CaarFunctorImpl {
       auto buffers_grad_tmp = viewAsReal(m_buffers.grad_tmp);
       auto buffers_omega_i = viewAsReal(m_buffers.w_tens);
       auto buffers_omega_p = viewAsReal(m_buffers.omega_p);
+      auto buffers_phi = viewAsReal(m_buffers.phi);
       auto &buffers_phi_tens = m_buffers.phi_tens;
       auto buffers_pi = viewAsReal(m_buffers.pi);
       auto buffers_pi_i = viewAsReal(m_buffers.dp_i);
@@ -467,6 +468,7 @@ struct CaarFunctorImpl {
             if ((vtheta_dp < 0) || (dphi > 0)) abort();
             EquationOfState::compute_pnh_and_exner(vtheta_dp, dphi, buffers_pnh(b.e,b.x,b.y,b.z), buffers_exner(b.e,b.x,b.y,b.z));
 
+            buffers_phi(b.e,b.x,b.y,b.z) = 0.5 * (state_phinh_i(b.e,data_n0,b.x,b.y,b.z) + state_phinh_i(b.e,data_n0,b.x,b.y,b.z+1));
           }
 
           b.barrier();
@@ -486,6 +488,11 @@ struct CaarFunctorImpl {
           KOKKOS_LAMBDA(const Team &team) {
             const SphereScanOps s(team);
             s.nacs(state_phinh_i, data_n0, buffers_pnh, geometry_phis);
+            Kokkos::parallel_for(
+              Kokkos::ThreadVectorRange(s.t, NUM_PHYSICAL_LEV),
+              [&](const int z) {
+                buffers_phi(s.e,s.x,s.y,z) = 0.5 * (state_phinh_i(s.e,data_n0,s.x,s.y,z) + state_phinh_i(s.e,data_n0,s.x,s.y,z+1));
+              });
           });
       }
 
@@ -522,8 +529,9 @@ struct CaarFunctorImpl {
 
     KernelVariables kv(team, m_tu);
 
+#if 0
     // =========== EPOCH 1 =========== //
-    //compute_div_vdp(kv);
+    compute_div_vdp(kv);
 
     // =========== EPOCH 2 =========== //
     kv.team_barrier();
@@ -531,6 +539,7 @@ struct CaarFunctorImpl {
     // Computes pi, omega, and phi.
     const bool ok = compute_scan_quantities(kv);
     if ( ! ok) nerr = 1;
+#endif
 
     if (m_rsplit==0 || !m_theta_hydrostatic_mode) {
       // ============ EPOCH 2.1 =========== //
@@ -667,7 +676,6 @@ struct CaarFunctorImpl {
   bool compute_scan_quantities (KernelVariables &kv) const {
     bool ok = true;
     
-#if 0
     kv.team_barrier();
     Kokkos::parallel_for(Kokkos::TeamThreadRange(kv.team,NP*NP),
                          [&](const int idx) {
@@ -726,7 +734,6 @@ struct CaarFunctorImpl {
     // Compute grad(pi)
     m_sphere_ops.gradient_sphere(kv,Homme::subview(m_buffers.pi,kv.team_idx),
                                     Homme::subview(m_buffers.grad_tmp,kv.team_idx));
-#endif // TREY
     kv.team_barrier();
 
     // Update omega with v*grad(p)
@@ -735,7 +742,6 @@ struct CaarFunctorImpl {
       const int igp = idx / NP;
       const int jgp = idx % NP;
 
-#if 0
       auto omega = Homme::subview(m_buffers.omega_p,kv.team_idx,igp,jgp);
       auto v = Homme::subview(m_state.m_v,kv.ie,m_data.n0);
       auto grad_pi = Homme::subview(m_buffers.grad_tmp,kv.team_idx);
@@ -765,7 +771,6 @@ struct CaarFunctorImpl {
                                     Homme::subview(m_buffers.exner,kv.team_idx,igp,jgp));
         if ( ! ok1) ok = false;
       }
-#endif
 
       // Compute phi at midpoints
       ColumnOps::compute_midpoint_values(kv,Homme::subview(m_state.m_phinh_i,kv.ie,m_data.n0,igp,jgp),
