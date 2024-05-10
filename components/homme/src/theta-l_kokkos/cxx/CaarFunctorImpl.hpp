@@ -359,7 +359,7 @@ struct CaarFunctorImpl {
       auto buffers_omega_i = viewAsReal(m_buffers.w_tens);
       auto buffers_omega_p = viewAsReal(m_buffers.omega_p);
       auto buffers_phi = viewAsReal(m_buffers.phi);
-      auto &buffers_phi_tens = m_buffers.phi_tens;
+      auto buffers_phi_tens = viewAsReal(m_buffers.phi_tens);
       auto buffers_pi = viewAsReal(m_buffers.pi);
       auto buffers_pnh = viewAsReal(m_buffers.pnh);
       auto buffers_theta_tens = viewAsReal(m_buffers.theta_tens);
@@ -627,17 +627,25 @@ struct CaarFunctorImpl {
           auto &buffers_w_tens = buffers_omega_i; // reused
 
           Kokkos::parallel_for(
-            "caar compute_w_vadv num_interface_lev",
+            "caar compute_w_vadv num_interface_lev compute_phi_vadv",
             SphereCol::policy(m_num_elems, NUM_INTERFACE_LEV),
             KOKKOS_LAMBDA(const Team &team) {
               const SphereCol c(team);
+
+              // compute_w_vadv
 
               const Real tempm = (c.z == 0) ? 0 : buffers_temp(c.e,c.x,c.y,c.z-1);
               const Real tempz = (c.z == NUM_PHYSICAL_LEV) ? 0 : buffers_temp(c.e,c.x,c.y,c.z);
               const Real dw = (c.z == 0) ? tempz : (c.z == NUM_PHYSICAL_LEV) ? tempm : 0.5 * (tempz + tempm);
               buffers_w_tens(c.e,c.x,c.y,c.z) = dw / buffers_dp_i(c.e,c.x,c.y,c.z);
-            });
 
+              // compute_phi_vadv
+
+              const Real phim = (c.z == 0) ? 0 : buffers_phi(c.e,c.x,c.y,c.z-1);
+              const Real phiz = (c.z == NUM_PHYSICAL_LEV) ? 0 : buffers_phi(c.e,c.x,c.y,c.z);
+              const Real phi_vadv = ((c.z == 0) || (c.z == NUM_PHYSICAL_LEV)) ? 0 : (phiz - phim) * buffers_eta_dot_dpdn(c.e,c.x,c.y,c.z) / buffers_dp_i(c.e,c.x,c.y,c.z);
+              buffers_phi_tens(c.e,c.x,c.y,c.z) = phi_vadv;
+            });
         }
       }
       // TREY
@@ -691,13 +699,13 @@ struct CaarFunctorImpl {
       kv.team_barrier();
       compute_interface_quantities(kv);
     }
-#endif
 
     if (m_rsplit==0) {
       // ============= EPOCH 2.2 ============ //
       kv.team_barrier();
       compute_vertical_advection(kv);
     }
+#endif
 
     // ============= EPOCH 3 ============== //
     kv.team_barrier();
@@ -1001,15 +1009,11 @@ struct CaarFunctorImpl {
       const int igp = idx / NP;
       const int jgp = idx % NP;
 
-#if 0
       compute_eta_dot_dpn (kv,igp,jgp);
       compute_v_vadv      (kv,igp,jgp);
       compute_vtheta_vadv (kv,igp,jgp);
-#endif
       if (!m_theta_hydrostatic_mode) {
-#if 0
         compute_w_vadv      (kv,igp,jgp);
-#endif
         compute_phi_vadv    (kv,igp,jgp);
       }
       // TREY
