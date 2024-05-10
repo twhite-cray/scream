@@ -364,7 +364,7 @@ struct CaarFunctorImpl {
       auto buffers_pnh = viewAsReal(m_buffers.pnh);
       auto &buffers_theta_tens = m_buffers.theta_tens;
       auto buffers_v_i = viewAsReal(m_buffers.v_i);
-      auto &buffers_v_tens = m_buffers.v_tens;
+      auto buffers_v_tens = viewAsReal(m_buffers.v_tens);
       auto buffers_vdp = viewAsReal(m_buffers.vdp);
       auto buffers_vtheta_i = viewAsReal(m_buffers.vtheta_i);
 
@@ -481,6 +481,7 @@ struct CaarFunctorImpl {
         });
 
       if (theta_hydrostatic_mode) {
+
         Kokkos::parallel_for(
           "caar compute_phi_i",
           SphereScanOps::policy(m_num_elems),
@@ -495,7 +496,6 @@ struct CaarFunctorImpl {
           });
       }
 
-      // compute_interface_quantities
       if ((rsplit == 0) || !theta_hydrostatic_mode) {
 
           Kokkos::parallel_for(
@@ -529,8 +529,6 @@ struct CaarFunctorImpl {
 
               if (rsplit == 0) {
 
-                //buffers_vtheta_i(c.e,c.x,c.y,c.z) = ((c.z == 0) || (c.z == NUM_PHYSICAL_LEV)) ? 0 : (buffers_phi(c.e,c.x,c.y,c.z) - buffers_phi(c.e,c.x,c.y,c.z-1)) / (buffers_exner(c.e,c.x,c.y,c.z) - buffers_exner(c.e,c.x,c.y,c.z-1));
-
                 Real vtheta_i = 0;
                 if ((c.z > 0) && (c.z < NUM_PHYSICAL_LEV)) {
                   const Real dphi = buffers_phi(c.e,c.x,c.y,c.z) - buffers_phi(c.e,c.x,c.y,c.z-1);
@@ -541,10 +539,64 @@ struct CaarFunctorImpl {
                 if (!theta_hydrostatic_mode) vtheta_i *= buffers_dpnh_dp_i(c.e,c.x,c.y,c.z);
                 buffers_vtheta_i(c.e,c.x,c.y,c.z) = vtheta_i;
               }
-      // TREY
-
             });
       }
+
+      if (rsplit == 0) {
+
+        auto buffers_eta_dot_dpdn = viewAsReal(m_buffers.eta_dot_dpdn);
+        auto &hvcoord_hybrid_bi = m_hvcoord.hybrid_bi;
+
+        Kokkos::parallel_for(
+          "caar compute_eta_dot_dpn",
+          SphereScanOps::policy(m_num_elems),
+          KOKKOS_LAMBDA(const Team &team) {
+
+            const SphereScanOps s(team);
+            s.scan(buffers_eta_dot_dpdn, buffers_div_vdp, 0);
+
+            const Real last = buffers_eta_dot_dpdn(s.e,s.x,s.y,NUM_PHYSICAL_LEV);
+
+            Kokkos::parallel_for(
+              Kokkos::ThreadVectorRange(s.t, 1, NUM_PHYSICAL_LEV),
+              [&](const int z) {
+                Real eta_dot_dpdn = -buffers_eta_dot_dpdn(s.e,s.x,s.y,z);
+                eta_dot_dpdn += hvcoord_hybrid_bi(z) * last;
+                buffers_eta_dot_dpdn(s.e,s.x,s.y,z) = eta_dot_dpdn;
+              });
+
+            Kokkos::single(
+              Kokkos::PerThread(team),
+              [&]() {
+                buffers_eta_dot_dpdn(s.e,s.x,s.y,0) = buffers_eta_dot_dpdn(s.e,s.x,s.y,NUM_PHYSICAL_LEV) = 0;
+              });
+          });
+
+        Kokkos::parallel_for(
+          "caar compute_v_vadv",
+          SphereCol::policy(m_num_elems, NUM_PHYSICAL_LEV),
+          KOKKOS_LAMBDA(const Team &team) {
+            const SphereCol c(team);
+            const Real uz = state_v(c.e,data_n0,0,c.x,c.y,c.z);
+            const Real vz = state_v(c.e,data_n0,1,c.x,c.y,c.z);
+            const Real dp = state_dp3d(c.e,data_n0,c.x,c.y,c.z);
+            Real u = 0;
+            Real v = 0;
+            if (c.z < NUM_PHYSICAL_LEV-1) {
+              const Real facp = 0.5 * buffers_eta_dot_dpdn(c.e,c.x,c.y,c.z+1) / dp;
+              u = facp * (state_v(c.e,data_n0,0,c.x,c.y,c.z+1) - uz);
+              v = facp * (state_v(c.e,data_n0,1,c.x,c.y,c.z+1) - vz);
+            }
+            if (c.z > 0) {
+              const Real facm = 0.5 * buffers_eta_dot_dpdn(c.e,c.x,c.y,c.z) / dp;
+              u += facm * (uz - state_v(c.e,data_n0,0,c.x,c.y,c.z-1));
+              v += facm * (vz - state_v(c.e,data_n0,1,c.x,c.y,c.z-1));
+            }
+            buffers_v_tens(c.e,0,c.x,c.y,c.z) = u;
+            buffers_v_tens(c.e,1,c.x,c.y,c.z) = v;
+          });
+      }
+      // TREY
 
     }
 
@@ -905,13 +957,16 @@ struct CaarFunctorImpl {
       const int igp = idx / NP;
       const int jgp = idx % NP;
 
+#if 0
       compute_eta_dot_dpn (kv,igp,jgp);
       compute_v_vadv      (kv,igp,jgp);
+#endif
       compute_vtheta_vadv (kv,igp,jgp);
       if (!m_theta_hydrostatic_mode) {
         compute_w_vadv      (kv,igp,jgp);
         compute_phi_vadv    (kv,igp,jgp);
       }
+      // TREY
     });
   }
 
