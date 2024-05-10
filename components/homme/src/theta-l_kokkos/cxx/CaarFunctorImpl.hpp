@@ -362,7 +362,7 @@ struct CaarFunctorImpl {
       auto &buffers_phi_tens = m_buffers.phi_tens;
       auto buffers_pi = viewAsReal(m_buffers.pi);
       auto buffers_pnh = viewAsReal(m_buffers.pnh);
-      auto &buffers_theta_tens = m_buffers.theta_tens;
+      auto buffers_theta_tens = viewAsReal(m_buffers.theta_tens);
       auto buffers_v_i = viewAsReal(m_buffers.v_i);
       auto buffers_v_tens = viewAsReal(m_buffers.v_tens);
       auto buffers_vdp = viewAsReal(m_buffers.vdp);
@@ -573,27 +573,40 @@ struct CaarFunctorImpl {
           });
 
         Kokkos::parallel_for(
-          "caar compute_v_vadv",
+          "caar compute_v_vadv compute_vtheta_vadv",
           SphereCol::policy(m_num_elems, NUM_PHYSICAL_LEV),
           KOKKOS_LAMBDA(const Team &team) {
             const SphereCol c(team);
+
+            // compute_v_vadv
+
             const Real uz = state_v(c.e,data_n0,0,c.x,c.y,c.z);
             const Real vz = state_v(c.e,data_n0,1,c.x,c.y,c.z);
             const Real dp = state_dp3d(c.e,data_n0,c.x,c.y,c.z);
+
+            const Real etap = buffers_eta_dot_dpdn(c.e,c.x,c.y,c.z+1);
+            const Real etaz = buffers_eta_dot_dpdn(c.e,c.x,c.y,c.z);
+
             Real u = 0;
             Real v = 0;
             if (c.z < NUM_PHYSICAL_LEV-1) {
-              const Real facp = 0.5 * buffers_eta_dot_dpdn(c.e,c.x,c.y,c.z+1) / dp;
+              const Real facp = 0.5 * etap / dp;
               u = facp * (state_v(c.e,data_n0,0,c.x,c.y,c.z+1) - uz);
               v = facp * (state_v(c.e,data_n0,1,c.x,c.y,c.z+1) - vz);
             }
             if (c.z > 0) {
-              const Real facm = 0.5 * buffers_eta_dot_dpdn(c.e,c.x,c.y,c.z) / dp;
+              const Real facm = 0.5 * etaz / dp;
               u += facm * (uz - state_v(c.e,data_n0,0,c.x,c.y,c.z-1));
               v += facm * (vz - state_v(c.e,data_n0,1,c.x,c.y,c.z-1));
             }
             buffers_v_tens(c.e,0,c.x,c.y,c.z) = u;
             buffers_v_tens(c.e,1,c.x,c.y,c.z) = v;
+
+            // compute_vtheta_vadv
+
+            const Real thetap = etap * buffers_vtheta_i(c.e,c.x,c.y,c.z+1);
+            const Real thetaz = etaz * buffers_vtheta_i(c.e,c.x,c.y,c.z);
+            buffers_theta_tens(c.e,c.x,c.y,c.z) = thetap - thetaz;
           });
       }
       // TREY
@@ -960,8 +973,8 @@ struct CaarFunctorImpl {
 #if 0
       compute_eta_dot_dpn (kv,igp,jgp);
       compute_v_vadv      (kv,igp,jgp);
-#endif
       compute_vtheta_vadv (kv,igp,jgp);
+#endif
       if (!m_theta_hydrostatic_mode) {
         compute_w_vadv      (kv,igp,jgp);
         compute_phi_vadv    (kv,igp,jgp);
