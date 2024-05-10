@@ -514,12 +514,12 @@ struct CaarFunctorImpl {
 
                 const Real v0m = (c.z == 0) ? 0 : state_v(c.e,data_n0,0,c.x,c.y,c.z-1);
                 const Real v0z = (c.z == NUM_PHYSICAL_LEV) ? 0 : state_v(c.e,data_n0,0,c.x,c.y,c.z);
-                const Real v_i0 = (c.z == 0) ? v0z : (c.z == NUM_PHYSICAL_LEV) ? v0m : (dz * v0z + dm * v0m) / (2.0 * dp_i);
+                const Real v_i0 = (c.z == 0) ? v0z : (c.z == NUM_PHYSICAL_LEV) ? v0m : (dz * v0z + dm * v0m) / (dm + dz);
                 buffers_v_i(c.e,0,c.x,c.y,c.z) = v_i0;
 
                 const Real v1m = (c.z == 0) ? 0 : state_v(c.e,data_n0,1,c.x,c.y,c.z-1);
                 const Real v1z = (c.z == NUM_PHYSICAL_LEV) ? 0 : state_v(c.e,data_n0,1,c.x,c.y,c.z);
-                const Real v_i1 = (c.z == 0) ? v1z : (c.z == NUM_PHYSICAL_LEV) ? v1m :(dz * v1z + dm * v1m) / (2.0 * dp_i);
+                const Real v_i1 = (c.z == 0) ? v1z : (c.z == NUM_PHYSICAL_LEV) ? v1m :(dz * v1z + dm * v1m) / (dm + dz);
                 buffers_v_i(c.e,1,c.x,c.y,c.z) = v_i1;
 
                 const Real pm = (c.z == 0) ? pi_i00 : buffers_pnh(c.e,c.x,c.y,c.z-1);
