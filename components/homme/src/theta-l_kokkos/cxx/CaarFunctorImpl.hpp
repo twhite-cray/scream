@@ -396,7 +396,7 @@ struct CaarFunctorImpl {
       auto state_phinh_i = viewAsReal(m_state.m_phinh_i);
       auto state_v = viewAsReal(m_state.m_v);
       auto state_vtheta_dp = viewAsReal(m_state.m_vtheta_dp);
-      auto &state_w_i = m_state.m_w_i;
+      auto state_w_i = viewAsReal(m_state.m_w_i);
 
       constexpr Real div1mkappa = 1.0 / (1.0 - PhysicalConstants::kappa);
       constexpr Real divp0 = 1.0 / PhysicalConstants::p0;
@@ -608,6 +608,23 @@ struct CaarFunctorImpl {
             const Real thetaz = etaz * buffers_vtheta_i(c.e,c.x,c.y,c.z);
             buffers_theta_tens(c.e,c.x,c.y,c.z) = thetap - thetaz;
           });
+
+        if (!theta_hydrostatic_mode) {
+
+          auto buffers_temp = viewAsReal(m_buffers.temp);
+
+          Kokkos::parallel_for(
+            "caar compute_w_vadv",
+            SphereCol::policy(m_num_elems, NUM_PHYSICAL_LEV),
+            KOKKOS_LAMBDA(const Team &team) {
+              const SphereCol c(team);
+
+              const Real dw = state_w_i(c.e,data_n0,c.x,c.y,c.z+1) - state_w_i(c.e,data_n0,c.x,c.y,c.z);
+              const Real eta = 0.5 * (buffers_eta_dot_dpdn(c.e,c.x,c.y,c.z) + buffers_eta_dot_dpdn(c.e,c.x,c.y,c.z+1));
+              buffers_temp(c.e,c.x,c.y,c.z) = dw * eta;
+            });
+
+        }
       }
       // TREY
 
@@ -1068,8 +1085,10 @@ struct CaarFunctorImpl {
     auto eta_dot_dpdn = Homme::subview(m_buffers.eta_dot_dpdn,kv.team_idx,igp,jgp);
     auto w_vadv = Homme::subview(m_buffers.w_tens,kv.team_idx,igp,jgp);
 
+#if 0
     ColumnOps::compute_midpoint_delta(kv,w_i,temp);
     ColumnOps::compute_midpoint_values<CombineMode::Multiply>(kv,eta_dot_dpdn,temp);
+#endif
 
     ColumnOps::compute_interface_values(kv,temp,w_vadv);
     Kokkos::parallel_for(Kokkos::ThreadVectorRange(kv.team,NUM_LEV_P),
