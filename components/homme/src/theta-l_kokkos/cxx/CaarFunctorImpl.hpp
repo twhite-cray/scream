@@ -471,14 +471,13 @@ struct CaarFunctorImpl {
           });
       }
 
+      auto buffers_dpnh_dp_i = viewAsReal(m_buffers.dpnh_dp_i);
+      auto buffers_v_i = viewAsReal(m_buffers.v_i);
       auto buffers_vtheta_i = viewAsReal(m_buffers.vtheta_i);
 
       const int rsplit = m_rsplit;
 
       if ((rsplit == 0) || !theta_hydrostatic_mode) {
-
-        auto buffers_dpnh_dp_i = viewAsReal(m_buffers.dpnh_dp_i);
-        auto buffers_v_i = viewAsReal(m_buffers.v_i);
 
         Kokkos::parallel_for(
           "caar compute_interface_quantities",
@@ -646,6 +645,11 @@ struct CaarFunctorImpl {
 
         auto buffers_grad_phinh_i = viewAsReal(m_buffers.grad_phinh_i);
         auto buffers_grad_w_i = viewAsReal(m_buffers.grad_w_i);
+        auto buffers_w_tens = viewAsReal(m_buffers.w_tens);
+
+        const Real data_scale1 = m_data.scale1;
+        const Real gscale1 = m_data.scale1 * PhysicalConstants::g;
+        const Real gscale2 = m_data.scale2 * PhysicalConstants::g;
 
         Kokkos::parallel_for(
           "caar compute_w_and_phi_tens",
@@ -656,6 +660,13 @@ struct CaarFunctorImpl {
 
             c.grad(buffers_grad_phinh_i, state_phinh_i, data_n0);
             c.grad(buffers_grad_w_i, state_w_i, data_n0);
+
+            Real w_tens = (rsplit) ? 0 : buffers_w_tens(c.e,c.x,c.y,c.z);
+            w_tens += buffers_v_i(c.e,0,c.x,c.y,c.z) * buffers_grad_w_i(c.e,0,c.x,c.y,c.z) + buffers_v_i(c.e,1,c.x,c.y,c.z) * buffers_grad_w_i(c.e,1,c.x,c.y,c.z);
+            w_tens *= -data_scale1;
+            const Real gscale = (c.z == NUM_PHYSICAL_LEV) ? gscale1 : gscale2;
+            w_tens += (buffers_dpnh_dp_i(c.e,c.x,c.y,c.z)-Real(1)) * gscale;
+            buffers_w_tens(c.e,c.x,c.y,c.z) = w_tens;
           });
       }
       // TREY
@@ -1214,6 +1225,7 @@ struct CaarFunctorImpl {
         // Compute w_tens
         Scalar v_grad = v_i(0,igp,jgp,ilev)*grad_w_i(0,igp,jgp,ilev)
                       + v_i(1,igp,jgp,ilev)*grad_w_i(1,igp,jgp,ilev);
+#if 0
         if (m_rsplit==0) {
           w_tens(ilev) += v_grad;
         } else {
@@ -1222,6 +1234,7 @@ struct CaarFunctorImpl {
         w_tens(ilev) *= -m_data.scale1;
         w_tens(ilev) += (m_buffers.dpnh_dp_i(kv.team_idx,igp,jgp,ilev)-1) *
                         (ilev==(NUM_LEV_P-1) ? m_scale2g_last_int_pack : m_data.scale2*g);
+#endif
 
         // Compute phi_tens.
         v_grad = v_i(0,igp,jgp,ilev)*grad_phinh_i(0,igp,jgp,ilev)
