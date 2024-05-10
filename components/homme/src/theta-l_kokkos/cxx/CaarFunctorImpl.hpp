@@ -524,6 +524,8 @@ struct CaarFunctorImpl {
           });
       }
 
+      auto state_w_i = viewAsReal(m_state.m_w_i);
+
       if (rsplit == 0) {
 
         auto buffers_eta_dot_dpdn = viewAsReal(m_buffers.eta_dot_dpdn);
@@ -602,7 +604,6 @@ struct CaarFunctorImpl {
         if (!theta_hydrostatic_mode) {
 
           auto buffers_temp = viewAsReal(m_buffers.temp);
-          auto state_w_i = viewAsReal(m_state.m_w_i);
 
           Kokkos::parallel_for(
             "caar compute_w_vadv num_physical_lev",
@@ -639,6 +640,23 @@ struct CaarFunctorImpl {
               buffers_phi_tens(c.e,c.x,c.y,c.z) = phi_vadv;
             });
         }
+      }
+
+      if (!theta_hydrostatic_mode) {
+
+        auto buffers_grad_phinh_i = viewAsReal(m_buffers.grad_phinh_i);
+        auto buffers_grad_w_i = viewAsReal(m_buffers.grad_w_i);
+
+        Kokkos::parallel_for(
+          "caar compute_w_and_phi_tens",
+          SphereColOps::policy(m_num_elems, NUM_INTERFACE_LEV),
+          KOKKOS_LAMBDA(const Team &team) {
+
+            const SphereColOps c(sg, team);
+
+            c.grad(buffers_grad_phinh_i, state_phinh_i, data_n0);
+            c.grad(buffers_grad_w_i, state_w_i, data_n0);
+          });
       }
       // TREY
 
@@ -1169,11 +1187,13 @@ struct CaarFunctorImpl {
     // Compute phi_tens = scale1*(-phi_vadv_i - v*grad(phinh_i)) + scale2*g*w_i
     auto grad_w_i = Homme::subview(m_buffers.grad_w_i,kv.team_idx);
     auto grad_phinh_i = Homme::subview(m_buffers.grad_phinh_i,kv.team_idx);
+#if 0
     m_sphere_ops.gradient_sphere(kv,Homme::subview(m_state.m_phinh_i,kv.ie,m_data.n0),
                                     grad_phinh_i);
     kv.team_barrier();
     m_sphere_ops.gradient_sphere(kv,Homme::subview(m_state.m_w_i,kv.ie,m_data.n0),
                                     grad_w_i);
+#endif
     kv.team_barrier();
 
     auto v_i = Homme::subview(m_buffers.v_i,kv.team_idx);

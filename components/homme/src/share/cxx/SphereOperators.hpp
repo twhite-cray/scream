@@ -1380,7 +1380,6 @@ struct SphereColOps: SphereCol {
   template <typename OutView, typename InView>
   KOKKOS_INLINE_FUNCTION void grad(OutView &out, const InView &in, const int n) const
   {
-    if (z >= NUM_PHYSICAL_LEV) return;
     Real s0 = 0;
     Real s1 = 0;
     for (int j = 0; j < NP; j++) {
