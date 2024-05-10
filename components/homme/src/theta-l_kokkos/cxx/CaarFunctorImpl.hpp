@@ -349,7 +349,7 @@ struct CaarFunctorImpl {
 
     {
       auto buffers_dp_tens = viewAsReal(m_buffers.dp_tens);
-      auto &buffers_dpnh_dp_i = m_buffers.dpnh_dp_i;
+      auto buffers_dpnh_dp_i = viewAsReal(m_buffers.dpnh_dp_i);
       auto buffers_div_vdp = viewAsReal(m_buffers.div_vdp);
       auto buffers_dp_i = viewAsReal(m_buffers.dp_i);
       auto &buffers_eta_dot_dpdn = m_buffers.eta_dot_dpdn;
@@ -364,8 +364,9 @@ struct CaarFunctorImpl {
       auto buffers_pnh = viewAsReal(m_buffers.pnh);
       auto &buffers_theta_tens = m_buffers.theta_tens;
       auto buffers_v_i = viewAsReal(m_buffers.v_i);
-      auto buffers_vdp = viewAsReal(m_buffers.vdp);
       auto &buffers_v_tens = m_buffers.v_tens;
+      auto buffers_vdp = viewAsReal(m_buffers.vdp);
+      auto buffers_vtheta_i = viewAsReal(m_buffers.vtheta_i);
 
       const Real data_dt = m_data.dt;
       const Real data_eta_ave_w = m_data.eta_ave_w;
@@ -495,7 +496,6 @@ struct CaarFunctorImpl {
       }
 
       // compute_interface_quantities
-      // TREY
       if ((rsplit == 0) || !theta_hydrostatic_mode) {
 
           Kokkos::parallel_for(
@@ -526,6 +526,22 @@ struct CaarFunctorImpl {
                 const Real pz = (c.z == NUM_PHYSICAL_LEV) ? pm + 0.5 * dm : buffers_pnh(c.e,c.x,c.y,c.z);
                 buffers_dpnh_dp_i(c.e,c.x,c.y,c.z) = 2.0 * (pz - pm) / (dm + dz);
               }
+
+              if (rsplit == 0) {
+
+                //buffers_vtheta_i(c.e,c.x,c.y,c.z) = ((c.z == 0) || (c.z == NUM_PHYSICAL_LEV)) ? 0 : (buffers_phi(c.e,c.x,c.y,c.z) - buffers_phi(c.e,c.x,c.y,c.z-1)) / (buffers_exner(c.e,c.x,c.y,c.z) - buffers_exner(c.e,c.x,c.y,c.z-1));
+
+                Real vtheta_i = 0;
+                if ((c.z > 0) && (c.z < NUM_PHYSICAL_LEV)) {
+                  const Real dphi = buffers_phi(c.e,c.x,c.y,c.z) - buffers_phi(c.e,c.x,c.y,c.z-1);
+                  const Real dexner = buffers_exner(c.e,c.x,c.y,c.z) - buffers_exner(c.e,c.x,c.y,c.z-1);
+                  vtheta_i = dphi / dexner;
+                }
+                vtheta_i /= -PhysicalConstants::cp;
+                if (!theta_hydrostatic_mode) vtheta_i *= buffers_dpnh_dp_i(c.e,c.x,c.y,c.z);
+                buffers_vtheta_i(c.e,c.x,c.y,c.z) = vtheta_i;
+              }
+      // TREY
 
             });
       }
@@ -573,13 +589,13 @@ struct CaarFunctorImpl {
     // Computes pi, omega, and phi.
     const bool ok = compute_scan_quantities(kv);
     if ( ! ok) nerr = 1;
-#endif
 
     if (m_rsplit==0 || !m_theta_hydrostatic_mode) {
       // ============ EPOCH 2.1 =========== //
       kv.team_barrier();
       compute_interface_quantities(kv);
     }
+#endif
 
     if (m_rsplit==0) {
       // ============= EPOCH 2.2 ============ //
@@ -824,9 +840,6 @@ struct CaarFunctorImpl {
       auto dp   = Homme::subview(m_state.m_dp3d,kv.ie,m_data.n0,igp,jgp);
       auto dp_i = Homme::subview(m_buffers.dp_i,kv.team_idx,igp,jgp);
 
-      //TREY
-
-#if 0
       // Compute interface dp
       ColumnOps::compute_interface_values(kv.team,dp,dp_i);
 
@@ -848,7 +861,6 @@ struct CaarFunctorImpl {
                                    dp_i,
                                    dpnh_dp_i);
       }
-#endif
 
       if (m_rsplit==0) {
         // Shorter names, to keep a call to ColumnOps a bit shorter
