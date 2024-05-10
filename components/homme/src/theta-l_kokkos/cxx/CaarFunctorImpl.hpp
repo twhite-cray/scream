@@ -505,23 +505,26 @@ struct CaarFunctorImpl {
 
               const SphereColOps c(sg, team);
 
-              const Real2 dp = c.neighbors(data_n0, state_dp3d);
-              const Real dp_i = c.average(dp);
+              const Real dm = (c.z > 0) ? state_dp3d(c.e,data_n0,c.x,c.y,c.z-1) : 0;
+              const Real dz = (c.z < NUM_PHYSICAL_LEV) ? state_dp3d(c.e,data_n0,c.x,c.y,c.z) : 0;
+              const Real dp_i = (c.z == 0) ? dz : (c.z == NUM_PHYSICAL_LEV) ? dm : 0.5 * (dz + dm);
               buffers_dp_i(c.e,c.x,c.y,c.z) = dp_i;
 
               if (!theta_hydrostatic_mode) {
 
-                const Real2 v0 = c.neighbors(data_n0, 0, state_v);
-                const Real v_i0 = c.weighted(v0, dp);
+                const Real v0m = (c.z == 0) ? 0 : state_v(c.e,data_n0,0,c.x,c.y,c.z-1);
+                const Real v0z = (c.z == NUM_PHYSICAL_LEV) ? 0 : state_v(c.e,data_n0,0,c.x,c.y,c.z);
+                const Real v_i0 = (c.z == 0) ? v0z : (c.z == NUM_PHYSICAL_LEV) ? v0m : (dz * v0z + dm * v0m) / (2.0 * dp_i);
                 buffers_v_i(c.e,0,c.x,c.y,c.z) = v_i0;
 
-                const Real2 v1 = c.neighbors(data_n0, 1, state_v);
-                const Real v_i1 = c.weighted(v1, dp);
+                const Real v1m = (c.z == 0) ? 0 : state_v(c.e,data_n0,1,c.x,c.y,c.z-1);
+                const Real v1z = (c.z == NUM_PHYSICAL_LEV) ? 0 : state_v(c.e,data_n0,1,c.x,c.y,c.z);
+                const Real v_i1 = (c.z == 0) ? v1z : (c.z == NUM_PHYSICAL_LEV) ? v1m :(dz * v1z + dm * v1m) / (2.0 * dp_i);
                 buffers_v_i(c.e,1,c.x,c.y,c.z) = v_i1;
 
                 const Real pm = (c.z == 0) ? pi_i00 : buffers_pnh(c.e,c.x,c.y,c.z-1);
-                const Real pz = (c.z == NUM_PHYSICAL_LEV) ? pm + 0.5 * dp.x : buffers_pnh(c.e,c.x,c.y,c.z);
-                buffers_dpnh_dp_i(c.e,c.x,c.y,c.z) = 2.0 * (pz - pm) / (dp.x + dp.y);
+                const Real pz = (c.z == NUM_PHYSICAL_LEV) ? pm + 0.5 * dm : buffers_pnh(c.e,c.x,c.y,c.z);
+                buffers_dpnh_dp_i(c.e,c.x,c.y,c.z) = 2.0 * (pz - pm) / (dm + dz);
               }
 
             });
@@ -834,6 +837,7 @@ struct CaarFunctorImpl {
         // Compute interface horiz velocity
         auto u_i  = Homme::subview(m_buffers.v_i,kv.team_idx,0,igp,jgp);
         auto v_i  = Homme::subview(m_buffers.v_i,kv.team_idx,1,igp,jgp);
+
         ColumnOps::compute_interface_values(kv.team,dp,dp_i,u,u_i);
         ColumnOps::compute_interface_values(kv.team,dp,dp_i,v,v_i);
 

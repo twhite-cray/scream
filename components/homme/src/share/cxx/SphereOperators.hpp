@@ -1354,36 +1354,9 @@ struct SphereCol {
     y = xy % NP;
     z = t.team_rank();
   }
-
-  KOKKOS_INLINE_FUNCTION Real average(const Real2 in) const
-  {
-    return (z == 0) ? in.y : (z == NUM_PHYSICAL_LEV) ? in.x : 0.5 * (in.x + in.y);
-  }
-
-  template <typename InView>
-  KOKKOS_INLINE_FUNCTION Real2 neighbors(const int n, const InView &in) const
-  {
-    return Real2{
-      (z == 0) ? 0 : in(e,n,x,y,z-1),
-      (z == NUM_PHYSICAL_LEV) ? 0 : in(e,n,x,y,z) };
-  }
-
-  template <typename InView>
-  KOKKOS_INLINE_FUNCTION Real2 neighbors(const int n, const int m, const InView &in) const
-  {
-    return Real2{
-      (z == 0) ? 0 : in(e,n,m,x,y,z-1),
-      (z == NUM_PHYSICAL_LEV) ? 0 : in(e,n,m,x,y,z) };
-  }
-
   static TeamPolicy policy(const int num_elems, const int num_lev)
   {
     return TeamPolicy(num_elems * NPNP, num_lev);
-  }
-
-  KOKKOS_INLINE_FUNCTION Real weighted(const Real2 in, const Real2 weight) const
-  {
-    return (z == 0) ? in.y : (z == NUM_PHYSICAL_LEV) ? in.x : (weight.y * in.y + weight.x * in.x) / (2.0 * average(weight));
   }
 };
 
