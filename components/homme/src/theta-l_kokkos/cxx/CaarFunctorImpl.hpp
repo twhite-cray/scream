@@ -351,7 +351,10 @@ struct CaarFunctorImpl {
       auto buffers_div_vdp = viewAsReal(m_buffers.div_vdp);
       auto buffers_vdp = viewAsReal(m_buffers.vdp);
 
+      const Real data_eta_ave_w = m_data.eta_ave_w;
       const int data_n0 = m_data.n0;
+
+      auto derived_vn0 = viewAsReal(m_derived.m_vn0);
 
       const SphereGlobal sg(m_sphere_ops);
 
@@ -370,6 +373,8 @@ struct CaarFunctorImpl {
           const Real v1 = state_v(b.e,data_n0,1,b.x,b.y,b.z) * state_dp3d(b.e,data_n0,b.x,b.y,b.z);
           buffers_vdp(b.e,0,b.x,b.y,b.z) = v0;
           buffers_vdp(b.e,1,b.x,b.y,b.z) = v1;
+          derived_vn0(b.e,0,b.x,b.y,b.z) += data_eta_ave_w * v0;
+          derived_vn0(b.e,1,b.x,b.y,b.z) += data_eta_ave_w * v1;
 
           SphereBlockScratch ttmp0(b);
           SphereBlockScratch ttmp1(b);
@@ -399,6 +404,8 @@ struct CaarFunctorImpl {
       auto buffers_omega_p = viewAsReal(m_buffers.omega_p);
       auto buffers_phi = viewAsReal(m_buffers.phi);
       auto buffers_pnh = viewAsReal(m_buffers.pnh);
+
+      auto derived_omega_p = viewAsReal(m_derived.m_omega_p);
 
       auto state_phinh_i = viewAsReal(m_state.m_phinh_i);
       auto state_vtheta_dp = viewAsReal(m_state.m_vtheta_dp);
@@ -441,6 +448,9 @@ struct CaarFunctorImpl {
           Real omega = -0.5 * (buffers_omega_i(b.e,b.x,b.y,b.z) + buffers_omega_i(b.e,b.x,b.y,b.z+1));
           omega += state_v(b.e,data_n0,0,b.x,b.y,b.z) * grad0 + state_v(b.e,data_n0,1,b.x,b.y,b.z) * grad1;
           buffers_omega_p(b.e,b.x,b.y,b.z) = omega;
+
+          // compute_accumulated_quantities
+          derived_omega_p(b.e,b.x,b.y,b.z) += data_eta_ave_w * omega;
         });
 
       if (theta_hydrostatic_mode) {
@@ -547,6 +557,8 @@ struct CaarFunctorImpl {
         auto buffers_theta_tens = viewAsReal(m_buffers.theta_tens);
         auto buffers_v_tens = viewAsReal(m_buffers.v_tens);
 
+        auto derived_eta_dot_dpdn = viewAsReal(m_derived.m_eta_dot_dpdn);
+
         Kokkos::parallel_for(
           "caar compute_v_vadv compute_vtheta_vadv",
           SphereCol::policy(m_num_elems, NUM_PHYSICAL_LEV),
@@ -561,6 +573,9 @@ struct CaarFunctorImpl {
 
             const Real etap = buffers_eta_dot_dpdn(c.e,c.x,c.y,c.z+1);
             const Real etaz = buffers_eta_dot_dpdn(c.e,c.x,c.y,c.z);
+
+            // compute_accumulated_quantities
+            derived_eta_dot_dpdn(c.e,c.x,c.y,c.z) += data_eta_ave_w * etaz;
 
             Real u = 0;
             Real v = 0;
@@ -682,11 +697,11 @@ struct CaarFunctorImpl {
       kv.team_barrier();
       compute_vertical_advection(kv);
     }
-#endif
 
     // ============= EPOCH 3 ============== //
     kv.team_barrier();
     compute_accumulated_quantities(kv);
+#endif
 
     // Compute update quantities
     if (!m_theta_hydrostatic_mode) {
@@ -993,7 +1008,6 @@ struct CaarFunctorImpl {
         compute_w_vadv      (kv,igp,jgp);
         compute_phi_vadv    (kv,igp,jgp);
       }
-      // TREY
     });
   }
 
