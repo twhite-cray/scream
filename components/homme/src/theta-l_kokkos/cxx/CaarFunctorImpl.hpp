@@ -348,6 +348,7 @@ struct CaarFunctorImpl {
     GPTLstart("caar compute");
 
     {
+      auto buffers_dp_tens = viewAsReal(m_buffers.dp_tens);
       auto buffers_div_vdp = viewAsReal(m_buffers.div_vdp);
       auto buffers_vdp = viewAsReal(m_buffers.vdp);
 
@@ -384,6 +385,7 @@ struct CaarFunctorImpl {
 
           const Real dvdp = b.div(ttmp0, ttmp1);
           buffers_div_vdp(b.e,b.x,b.y,b.z) = dvdp;
+          buffers_dp_tens(b.e,b.x,b.y,b.z) = dvdp;
         });
       
       auto buffers_dp_i = viewAsReal(m_buffers.dp_i);
@@ -523,11 +525,11 @@ struct CaarFunctorImpl {
           });
       }
 
-      auto buffers_eta_dot_dpdn = viewAsReal(m_buffers.eta_dot_dpdn);
       auto state_w_i = viewAsReal(m_state.m_w_i);
 
       if (rsplit == 0) {
 
+        auto buffers_eta_dot_dpdn = viewAsReal(m_buffers.eta_dot_dpdn);
         auto &hvcoord_hybrid_bi = m_hvcoord.hybrid_bi;
 
         Kokkos::parallel_for(
@@ -575,6 +577,9 @@ struct CaarFunctorImpl {
             const Real etap = buffers_eta_dot_dpdn(c.e,c.x,c.y,c.z+1);
             const Real etaz = buffers_eta_dot_dpdn(c.e,c.x,c.y,c.z);
 
+            // compute_dp_and_theta_tens
+            buffers_dp_tens(c.e,c.x,c.y,c.z) += etap - etaz;
+            
             // compute_accumulated_quantities
             derived_eta_dot_dpdn(c.e,c.x,c.y,c.z) += data_eta_ave_w * etaz;
 
@@ -685,7 +690,6 @@ struct CaarFunctorImpl {
           });
       }
 
-      auto buffers_dp_tens = viewAsReal(m_buffers.dp_tens);
       auto buffers_theta_tens = viewAsReal(m_buffers.theta_tens);
 
       if (m_theta_advection_form == AdvectionForm::Conservative) {
@@ -697,10 +701,6 @@ struct CaarFunctorImpl {
 
             SphereBlockOps b(sg, team); 
             if (b.skip()) return;
-
-            Real dp_tens = (rsplit) ? 0 : buffers_eta_dot_dpdn(b.e,b.x,b.y,b.z+1) - buffers_eta_dot_dpdn(b.e,b.x,b.y,b.z);
-            dp_tens += buffers_div_vdp(b.e,b.x,b.y,b.z);
-            buffers_dp_tens(b.e,b.x,b.y,b.z) = dp_tens;
 
             const Real v0 = state_v(b.e,data_n0,0,b.x,b.y,b.z) * state_vtheta_dp(b.e,data_n0,b.x,b.y,b.z);
             const Real v1 = state_v(b.e,data_n0,1,b.x,b.y,b.z) * state_vtheta_dp(b.e,data_n0,b.x,b.y,b.z);
@@ -729,10 +729,6 @@ struct CaarFunctorImpl {
 
             SphereBlockOps b(sg, team); 
             if (b.skip()) return;
-
-            Real dp_tens = (rsplit) ? 0 : buffers_eta_dot_dpdn(b.e,b.x,b.y,b.z+1) - buffers_eta_dot_dpdn(b.e,b.x,b.y,b.z);
-            dp_tens += buffers_div_vdp(b.e,b.x,b.y,b.z);
-            buffers_dp_tens(b.e,b.x,b.y,b.z) = dp_tens;
 
             const Real vtheta = state_vtheta_dp(b.e,data_n0,b.x,b.y,b.z) / state_dp3d(b.e,data_n0,b.x,b.y,b.z);
             SphereBlockScratch ttmp0(b, vtheta);
