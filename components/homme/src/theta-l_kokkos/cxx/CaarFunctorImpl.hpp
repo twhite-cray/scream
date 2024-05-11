@@ -645,11 +645,17 @@ struct CaarFunctorImpl {
 
         auto buffers_grad_phinh_i = viewAsReal(m_buffers.grad_phinh_i);
         auto buffers_grad_w_i = viewAsReal(m_buffers.grad_w_i);
+        auto buffers_phi_tens = viewAsReal(m_buffers.phi_tens);
         auto buffers_w_tens = viewAsReal(m_buffers.w_tens);
 
-        const Real data_scale1 = m_data.scale1;
+        auto &geometry_gradphis = m_geometry.m_gradphis;
+
+        auto hvcoord_hybrid_bi_packed = viewAsReal(m_hvcoord.hybrid_bi_packed);
+
+        const Real dscale = m_data.scale1 - m_data.scale2;
         const Real gscale1 = m_data.scale1 * PhysicalConstants::g;
         const Real gscale2 = m_data.scale2 * PhysicalConstants::g;
+        const Real ndata_scale1 = -m_data.scale1;
 
         Kokkos::parallel_for(
           "caar compute_w_and_phi_tens",
@@ -660,13 +666,22 @@ struct CaarFunctorImpl {
 
             c.grad(buffers_grad_phinh_i, state_phinh_i, data_n0);
             c.grad(buffers_grad_w_i, state_w_i, data_n0);
+            const Real gscale = (c.z == NUM_PHYSICAL_LEV) ? gscale1 : gscale2;
 
             Real w_tens = (rsplit) ? 0 : buffers_w_tens(c.e,c.x,c.y,c.z);
             w_tens += buffers_v_i(c.e,0,c.x,c.y,c.z) * buffers_grad_w_i(c.e,0,c.x,c.y,c.z) + buffers_v_i(c.e,1,c.x,c.y,c.z) * buffers_grad_w_i(c.e,1,c.x,c.y,c.z);
-            w_tens *= -data_scale1;
-            const Real gscale = (c.z == NUM_PHYSICAL_LEV) ? gscale1 : gscale2;
+            w_tens *= ndata_scale1;
             w_tens += (buffers_dpnh_dp_i(c.e,c.x,c.y,c.z)-Real(1)) * gscale;
             buffers_w_tens(c.e,c.x,c.y,c.z) = w_tens;
+
+            Real phi_tens = (rsplit) ? 0 : buffers_phi_tens(c.e,c.x,c.y,c.z);
+            phi_tens += buffers_v_i(c.e,0,c.x,c.y,c.z) * buffers_grad_phinh_i(c.e,0,c.x,c.y,c.z) + buffers_v_i(c.e,1,c.x,c.y,c.z) * buffers_grad_phinh_i(c.e,1,c.x,c.y,c.z);
+            phi_tens *= ndata_scale1;
+            phi_tens += state_w_i(c.e,data_n0,c.x,c.y,c.z) * gscale;
+
+            if (dscale) phi_tens += dscale * (buffers_v_i(c.e,0,c.x,c.y,c.z) * geometry_gradphis(c.e,0,c.x,c.y) + buffers_v_i(c.e,1,c.x,c.y,c.z) * geometry_gradphis(c.e,1,c.x,c.y)) * hvcoord_hybrid_bi_packed(c.z);
+
+            buffers_phi_tens(c.e,c.x,c.y,c.z) = phi_tens;
           });
       }
       // TREY
@@ -730,12 +745,12 @@ struct CaarFunctorImpl {
     // ============= EPOCH 3 ============== //
     kv.team_barrier();
     compute_accumulated_quantities(kv);
-#endif
 
     // Compute update quantities
     if (!m_theta_hydrostatic_mode) {
       compute_w_and_phi_tens (kv);
     }
+#endif // TREY
 
     compute_dp_and_theta_tens (kv);
 
@@ -1198,13 +1213,11 @@ struct CaarFunctorImpl {
     // Compute phi_tens = scale1*(-phi_vadv_i - v*grad(phinh_i)) + scale2*g*w_i
     auto grad_w_i = Homme::subview(m_buffers.grad_w_i,kv.team_idx);
     auto grad_phinh_i = Homme::subview(m_buffers.grad_phinh_i,kv.team_idx);
-#if 0
     m_sphere_ops.gradient_sphere(kv,Homme::subview(m_state.m_phinh_i,kv.ie,m_data.n0),
                                     grad_phinh_i);
     kv.team_barrier();
     m_sphere_ops.gradient_sphere(kv,Homme::subview(m_state.m_w_i,kv.ie,m_data.n0),
                                     grad_w_i);
-#endif
     kv.team_barrier();
 
     auto v_i = Homme::subview(m_buffers.v_i,kv.team_idx);
@@ -1225,7 +1238,6 @@ struct CaarFunctorImpl {
         // Compute w_tens
         Scalar v_grad = v_i(0,igp,jgp,ilev)*grad_w_i(0,igp,jgp,ilev)
                       + v_i(1,igp,jgp,ilev)*grad_w_i(1,igp,jgp,ilev);
-#if 0
         if (m_rsplit==0) {
           w_tens(ilev) += v_grad;
         } else {
@@ -1234,7 +1246,6 @@ struct CaarFunctorImpl {
         w_tens(ilev) *= -m_data.scale1;
         w_tens(ilev) += (m_buffers.dpnh_dp_i(kv.team_idx,igp,jgp,ilev)-1) *
                         (ilev==(NUM_LEV_P-1) ? m_scale2g_last_int_pack : m_data.scale2*g);
-#endif
 
         // Compute phi_tens.
         v_grad = v_i(0,igp,jgp,ilev)*grad_phinh_i(0,igp,jgp,ilev)
