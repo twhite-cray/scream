@@ -684,6 +684,56 @@ struct CaarFunctorImpl {
             buffers_phi_tens(c.e,c.x,c.y,c.z) = phi_tens;
           });
       }
+
+      auto buffers_theta_tens = viewAsReal(m_buffers.theta_tens);
+
+      if (m_theta_advection_form == AdvectionForm::Conservative) {
+
+        Kokkos::parallel_for(
+          "caar compute_dp_and_theta_tens conservative",
+          SphereBlockOps::policy(m_num_elems, 2),
+          KOKKOS_LAMBDA(const Team &team) {
+
+            SphereBlockOps b(sg, team); 
+            if (b.skip()) return;
+
+            const Real v0 = state_v(b.e,data_n0,0,b.x,b.y,b.z) * state_vtheta_dp(b.e,data_n0,b.x,b.y,b.z);
+            const Real v1 = state_v(b.e,data_n0,1,b.x,b.y,b.z) * state_vtheta_dp(b.e,data_n0,b.x,b.y,b.z);
+
+            SphereBlockScratch ttmp0(b);
+            SphereBlockScratch ttmp1(b);
+            b.divInit(ttmp0, ttmp1, v0, v1);
+
+            b.barrier();
+
+            const Real div = b.div(ttmp0, ttmp1);
+            Real theta_tens = (rsplit) ? 0 : buffers_theta_tens(b.e,b.x,b.y,b.z);
+            theta_tens += div;
+            buffers_theta_tens(b.e,b.x,b.y,b.z) = theta_tens;
+          });
+
+      } else { // AdvectionForm::NonConservative
+
+        auto buffers_grad_tmp = viewAsReal(m_buffers.grad_tmp);
+
+        Kokkos::parallel_for(
+          "caar compute_dp_and_theta_tens conservative",
+          SphereBlockOps::policy(m_num_elems, 1),
+          KOKKOS_LAMBDA(const Team &team) {
+
+            SphereBlockOps b(sg, team); 
+            if (b.skip()) return;
+
+            const Real vtheta = state_vtheta_dp(b.e,data_n0,b.x,b.y,b.z) / state_dp3d(b.e,data_n0,b.x,b.y,b.z);
+            SphereBlockScratch ttmp0(b, vtheta);
+
+            b.barrier();
+
+            b.grad(buffers_grad_tmp(b.e,0,b.x,b.y,b.z), buffers_grad_tmp(b.e,1,b.x,b.y,b.z), ttmp0);
+          });
+
+      }
+
       // TREY
 
     }
@@ -1348,6 +1398,7 @@ struct CaarFunctorImpl {
       return v(icomp,igp,jgp,ilev) * vtheta_dp(igp,jgp,ilev);
     };
 
+#if 0
     if (m_theta_advection_form==AdvectionForm::Conservative) {
       if (m_rsplit==0) {
         using CM = CombineMode;
@@ -1363,6 +1414,7 @@ struct CaarFunctorImpl {
       m_sphere_ops.gradient_sphere(kv,vtheta,
                                       Homme::subview(m_buffers.grad_tmp,kv.team_idx));
     }
+#endif
     kv.team_barrier();
 
     Kokkos::parallel_for(Kokkos::TeamThreadRange(kv.team,NP*NP),
