@@ -525,6 +525,7 @@ struct CaarFunctorImpl {
           });
       }
 
+      auto buffers_theta_tens = viewAsReal(m_buffers.theta_tens);
       auto state_w_i = viewAsReal(m_state.m_w_i);
 
       if (rsplit == 0) {
@@ -557,7 +558,6 @@ struct CaarFunctorImpl {
               });
           });
 
-        auto buffers_theta_tens = viewAsReal(m_buffers.theta_tens);
         auto buffers_v_tens = viewAsReal(m_buffers.v_tens);
 
         auto derived_eta_dot_dpdn = viewAsReal(m_derived.m_eta_dot_dpdn);
@@ -690,7 +690,6 @@ struct CaarFunctorImpl {
           });
       }
 
-      auto buffers_theta_tens = viewAsReal(m_buffers.theta_tens);
 
       if (m_theta_advection_form == AdvectionForm::Conservative) {
 
@@ -735,9 +734,15 @@ struct CaarFunctorImpl {
 
             b.barrier();
 
-            b.grad(buffers_grad_tmp(b.e,0,b.x,b.y,b.z), buffers_grad_tmp(b.e,1,b.x,b.y,b.z), ttmp0);
-          });
+            Real grad0, grad1;
+            b.grad(grad0, grad1, ttmp0);
+            Real theta_tens = buffers_div_vdp(b.e,b.x,b.y,b.z) * vtheta;
+            theta_tens += grad0 * buffers_vdp(b.e,0,b.x,b.y,b.z);
+            theta_tens += grad1 * buffers_vdp(b.e,1,b.x,b.y,b.z);
 
+            if (rsplit) buffers_theta_tens(b.e,b.x,b.y,b.z) = theta_tens;
+            else buffers_theta_tens(b.e,b.x,b.y,b.z) += theta_tens;
+          });
       }
 
       // TREY
@@ -806,9 +811,9 @@ struct CaarFunctorImpl {
     if (!m_theta_hydrostatic_mode) {
       compute_w_and_phi_tens (kv);
     }
-#endif // TREY
 
     compute_dp_and_theta_tens (kv);
+#endif // TREY
 
     // ============= EPOCH 4 =========== //
     // compute_v_tens reuses some buffers used by compute_dp_and_theta_tens 
@@ -1404,7 +1409,6 @@ struct CaarFunctorImpl {
       return v(icomp,igp,jgp,ilev) * vtheta_dp(igp,jgp,ilev);
     };
 
-#if 0
     if (m_theta_advection_form==AdvectionForm::Conservative) {
       if (m_rsplit==0) {
         using CM = CombineMode;
@@ -1420,7 +1424,6 @@ struct CaarFunctorImpl {
       m_sphere_ops.gradient_sphere(kv,vtheta,
                                       Homme::subview(m_buffers.grad_tmp,kv.team_idx));
     }
-#endif
     kv.team_barrier();
 
     Kokkos::parallel_for(Kokkos::TeamThreadRange(kv.team,NP*NP),
@@ -1433,23 +1436,19 @@ struct CaarFunctorImpl {
 
       auto div_vdp = Homme::subview(m_buffers.div_vdp,kv.team_idx,igp,jgp);
 
-#if 0
       if (m_rsplit==0) {
         auto eta_dot_dpdn = Homme::subview(m_buffers.eta_dot_dpdn,kv.team_idx,igp,jgp);
         ColumnOps::compute_midpoint_delta(kv,eta_dot_dpdn,dp_tens);
       }
-#endif
 
       Kokkos::parallel_for(Kokkos::ThreadVectorRange(kv.team,NUM_LEV),
                            [&](const int ilev) {
-#if 0
         // Compute dp_tens
         if (m_rsplit>0) {
           dp_tens(ilev)  = div_vdp(ilev);
         } else {
           dp_tens(ilev) += div_vdp(ilev);
         }
-#endif
 
         // Compute theta_tens
         // NOTE: if the condition is false, then theta_tens already contains div(v*theta*dp) already
