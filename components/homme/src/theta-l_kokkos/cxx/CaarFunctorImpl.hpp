@@ -754,6 +754,8 @@ struct CaarFunctorImpl {
           });
       }
 
+      auto buffers_grad_exner = viewAsReal(m_buffers.grad_exner);
+      auto buffers_grad_tmp = viewAsReal(m_buffers.grad_tmp);
       auto buffers_vort = viewAsReal(m_buffers.vort);
       auto &geometry_fcor = m_geometry.m_fcor;
       const bool pgrad_correction = m_pgrad_correction;
@@ -769,6 +771,12 @@ struct CaarFunctorImpl {
           const Real w2 = (theta_hydrostatic_mode) ? 0 : 0.25 * (state_w_i(b.e,data_n0,b.x,b.y,b.z) * state_w_i(b.e,data_n0,b.x,b.y,b.z) + state_w_i(b.e,data_n0,b.x,b.y,b.z+1) * state_w_i(b.e,data_n0,b.x,b.y,b.z+1));
           const SphereBlockScratch ttmp0(b, w2);
 
+          const Real exneriz = buffers_exner(b.e,b.x,b.y,b.z);
+          const SphereBlockScratch ttmp1(b, exneriz);
+
+          const Real log_exneriz = (pgrad_correction) ? log(exneriz) : 0;
+          const SphereBlockScratch ttmp2(b, log_exneriz);
+
           const Real v0 = state_v(b.e,data_n0,0,b.x,b.y,b.z);
           const Real v1 = state_v(b.e,data_n0,1,b.x,b.y,b.z);
 
@@ -783,6 +791,18 @@ struct CaarFunctorImpl {
             b.grad(grad_w0, grad_w1, ttmp0);
             buffers_vdp(b.e,0,b.x,b.y,b.z) = grad_w0;
             buffers_vdp(b.e,1,b.x,b.y,b.z) = grad_w1;
+          }
+
+          Real grad_exner0, grad_exner1;
+          b.grad(grad_exner0, grad_exner1, ttmp1);
+          buffers_grad_exner(b.e,0,b.x,b.y,b.z) = grad_exner0;
+          buffers_grad_exner(b.e,1,b.x,b.y,b.z) = grad_exner1;
+
+          if (pgrad_correction) {
+            Real grad_lexner0, grad_lexner1;
+            b.grad(grad_lexner0, grad_lexner1, ttmp2);
+            buffers_grad_tmp(b.e,0,b.x,b.y,b.z) = grad_lexner0;
+            buffers_grad_tmp(b.e,1,b.x,b.y,b.z) = grad_lexner1;
           }
 
           const Real vort = b.vort(ttmp3, ttmp4) + geometry_fcor(b.e,b.x,b.y);
@@ -1602,7 +1622,6 @@ struct CaarFunctorImpl {
                                        Homme::subview(m_buffers.v_i,kv.team_idx));
       kv.team_barrier();
     }
-#endif
 
     // Compute grad(exner)
     // Note: exner = (pi/p0)^k, therefore grad(exner) = k*(exner/pi)*grad(pi).
@@ -1620,6 +1639,7 @@ struct CaarFunctorImpl {
       m_sphere_ops.gradient_sphere(kv, log_exner,
                                        grad_tmp);
     }
+#endif
     kv.team_barrier();
 
     // Scalar w_vor,mgrad,w_gradw,gradw2;
