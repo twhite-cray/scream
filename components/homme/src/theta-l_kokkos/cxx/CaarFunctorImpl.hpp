@@ -647,6 +647,7 @@ struct CaarFunctorImpl {
       }
 
       auto buffers_grad_phinh_i = viewAsReal(m_buffers.grad_phinh_i);
+      auto buffers_grad_w_i = viewAsReal(m_buffers.grad_w_i);
 
       if (theta_hydrostatic_mode) {
 
@@ -660,7 +661,6 @@ struct CaarFunctorImpl {
 
       } else {
 
-        auto buffers_grad_w_i = viewAsReal(m_buffers.grad_w_i);
         auto buffers_phi_tens = viewAsReal(m_buffers.phi_tens);
         auto buffers_w_tens = viewAsReal(m_buffers.w_tens);
 
@@ -786,12 +786,15 @@ struct CaarFunctorImpl {
 
           b.barrier();
 
+          Real wvor_x = 0;
+          Real wvor_y = 0;
           if (!theta_hydrostatic_mode) {
-            Real grad_w0, grad_w1;
-            b.grad(grad_w0, grad_w1, ttmp0);
-            buffers_vdp(b.e,0,b.x,b.y,b.z) = grad_w0;
-            buffers_vdp(b.e,1,b.x,b.y,b.z) = grad_w1;
+            b.grad(wvor_x, wvor_y, ttmp0);
+            wvor_x -= 0.5 * (buffers_grad_w_i(b.e,0,b.x,b.y,b.z) * state_w_i(b.e,data_n0,b.x,b.y,b.z) + buffers_grad_w_i(b.e,0,b.x,b.y,b.z+1) * state_w_i(b.e,data_n0,b.x,b.y,b.z+1));
+            wvor_y -= 0.5 * (buffers_grad_w_i(b.e,1,b.x,b.y,b.z) * state_w_i(b.e,data_n0,b.x,b.y,b.z) + buffers_grad_w_i(b.e,1,b.x,b.y,b.z+1) * state_w_i(b.e,data_n0,b.x,b.y,b.z+1));
           }
+          buffers_vdp(b.e,0,b.x,b.y,b.z) = wvor_x;
+          buffers_vdp(b.e,1,b.x,b.y,b.z) = wvor_y;
 
           Real grad_exner0, grad_exner1;
           b.grad(grad_exner0, grad_exner1, ttmp1);
@@ -1651,6 +1654,7 @@ struct CaarFunctorImpl {
       auto wvor_x = Homme::subview(wvor,0,igp,jgp);
       auto wvor_y = Homme::subview(wvor,1,igp,jgp);
 
+#if 0
       if (!m_theta_hydrostatic_mode) {
         // Compute wvor = grad(average(w^2/2)) - average(w*grad(w))
         // Note: vtens is already storing grad(avg(w^2/2))
@@ -1678,6 +1682,7 @@ struct CaarFunctorImpl {
           wvor_y(ilev) = 0;
         });
       }
+#endif
 
       auto mgrad_x = Homme::subview(mgrad,0,igp,jgp);
       auto mgrad_y = Homme::subview(mgrad,1,igp,jgp);
