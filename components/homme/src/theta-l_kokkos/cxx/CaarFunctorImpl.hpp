@@ -646,9 +646,20 @@ struct CaarFunctorImpl {
         }
       }
 
-      if (!theta_hydrostatic_mode) {
+      auto buffers_grad_phinh_i = viewAsReal(m_buffers.grad_phinh_i);
 
-        auto buffers_grad_phinh_i = viewAsReal(m_buffers.grad_phinh_i);
+      if (theta_hydrostatic_mode) {
+
+        Kokkos::parallel_for(
+          "caar compute_w_and_phi_tens",
+          SphereColOps::policy(m_num_elems, NUM_INTERFACE_LEV),
+          KOKKOS_LAMBDA(const Team &team) {
+            const SphereColOps c(sg, team);
+            c.grad(buffers_grad_phinh_i, state_phinh_i, data_n0);
+          });
+
+      } else {
+
         auto buffers_grad_w_i = viewAsReal(m_buffers.grad_w_i);
         auto buffers_phi_tens = viewAsReal(m_buffers.phi_tens);
         auto buffers_w_tens = viewAsReal(m_buffers.w_tens);
@@ -767,6 +778,7 @@ struct CaarFunctorImpl {
           const Real vort = b.vort(ttmp3, ttmp4) + geometry_fcor(b.e,b.x,b.y);
           buffers_vort(b.e,b.x,b.y,b.z) = vort;
         });
+
 
       // TREY
 
@@ -1551,10 +1563,12 @@ struct CaarFunctorImpl {
 #endif
 
     if (m_theta_hydrostatic_mode) {
+#if 0
       // In nh mode, gradphinh has already been computed, but in hydro mode
       // we skip the whole compute_w_and_phi_tens call
       m_sphere_ops.gradient_sphere(kv,Homme::subview(m_state.m_phinh_i,kv.ie,m_data.n0),
                                       Homme::subview(m_buffers.grad_phinh_i,kv.team_idx));
+#endif
       kv.team_barrier();
     } else {
       // Compute average(w^2/2)
