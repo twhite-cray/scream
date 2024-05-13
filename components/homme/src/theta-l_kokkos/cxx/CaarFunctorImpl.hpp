@@ -756,6 +756,7 @@ struct CaarFunctorImpl {
 
       auto buffers_grad_exner = viewAsReal(m_buffers.grad_exner);
       auto buffers_grad_tmp = viewAsReal(m_buffers.grad_tmp);
+      auto buffers_mgrad = viewAsReal(m_buffers.mgrad);
       auto buffers_vort = viewAsReal(m_buffers.vort);
       auto &geometry_fcor = m_geometry.m_fcor;
       const bool pgrad_correction = m_pgrad_correction;
@@ -795,6 +796,18 @@ struct CaarFunctorImpl {
           }
           buffers_vdp(b.e,0,b.x,b.y,b.z) = wvor_x;
           buffers_vdp(b.e,1,b.x,b.y,b.z) = wvor_y;
+
+          Real mgrad_x, mgrad_y;
+          if (theta_hydrostatic_mode) {
+
+            mgrad_x = 0.5 * (buffers_grad_phinh_i(b.e,0,b.x,b.y,b.z) + buffers_grad_phinh_i(b.e,0,b.x,b.y,b.z+1));
+            mgrad_y = 0.5 * (buffers_grad_phinh_i(b.e,1,b.x,b.y,b.z) + buffers_grad_phinh_i(b.e,1,b.x,b.y,b.z+1));
+          } else {
+            mgrad_x = 0.5 * (buffers_grad_phinh_i(b.e,0,b.x,b.y,b.z) * buffers_dpnh_dp_i(b.e,b.x,b.y,b.z) + buffers_grad_phinh_i(b.e,0,b.x,b.y,b.z+1) * buffers_dpnh_dp_i(b.e,b.x,b.y,b.z+1));
+            mgrad_y = 0.5 * (buffers_grad_phinh_i(b.e,1,b.x,b.y,b.z) * buffers_dpnh_dp_i(b.e,b.x,b.y,b.z) + buffers_grad_phinh_i(b.e,1,b.x,b.y,b.z+1) * buffers_dpnh_dp_i(b.e,b.x,b.y,b.z+1));
+          }
+          buffers_mgrad(b.e,0,b.x,b.y,b.z) = mgrad_x;
+          buffers_mgrad(b.e,1,b.x,b.y,b.z) = mgrad_y;
 
           Real grad_exner0, grad_exner1;
           b.grad(grad_exner0, grad_exner1, ttmp1);
@@ -1687,6 +1700,7 @@ struct CaarFunctorImpl {
       auto mgrad_x = Homme::subview(mgrad,0,igp,jgp);
       auto mgrad_y = Homme::subview(mgrad,1,igp,jgp);
 
+#if 0
       // Compute mgrad = average(dpnh_dp_i*grad(phinh_i))
       const auto phinh_i_x = Homme::subview(m_buffers.grad_phinh_i,kv.team_idx,0,igp,jgp);
       const auto phinh_i_y = Homme::subview(m_buffers.grad_phinh_i,kv.team_idx,1,igp,jgp);
@@ -1705,6 +1719,7 @@ struct CaarFunctorImpl {
         ColumnOps::compute_midpoint_values(kv,prod_x,mgrad_x);
         ColumnOps::compute_midpoint_values(kv,prod_y,mgrad_y);
       }
+#endif
       kv.team_barrier();
 
       // Apply pgrad_correction: mgrad += cp*T0*(grad(log(exner))-grad(exner)/exner) (if applicable)
