@@ -766,6 +766,9 @@ struct CaarFunctorImpl {
           SphereBlockOps b(sg, team);
           if (b.skip()) return;
 
+          const Real w2 = (theta_hydrostatic_mode) ? 0 : 0.25 * (state_w_i(b.e,data_n0,b.x,b.y,b.z) * state_w_i(b.e,data_n0,b.x,b.y,b.z) + state_w_i(b.e,data_n0,b.x,b.y,b.z+1) * state_w_i(b.e,data_n0,b.x,b.y,b.z+1));
+          const SphereBlockScratch ttmp0(b, w2);
+
           const Real v0 = state_v(b.e,data_n0,0,b.x,b.y,b.z);
           const Real v1 = state_v(b.e,data_n0,1,b.x,b.y,b.z);
 
@@ -775,10 +778,16 @@ struct CaarFunctorImpl {
 
           b.barrier();
 
+          if (!theta_hydrostatic_mode) {
+            Real grad_w0, grad_w1;
+            b.grad(grad_w0, grad_w1, ttmp0);
+            buffers_vdp(b.e,0,b.x,b.y,b.z) = grad_w0;
+            buffers_vdp(b.e,1,b.x,b.y,b.z) = grad_w1;
+          }
+
           const Real vort = b.vort(ttmp3, ttmp4) + geometry_fcor(b.e,b.x,b.y);
           buffers_vort(b.e,b.x,b.y,b.z) = vort;
         });
-
 
       // TREY
 
@@ -1560,15 +1569,12 @@ struct CaarFunctorImpl {
     // Compute vorticity(v)
     m_sphere_ops.vorticity_sphere(kv, Homme::subview(m_state.m_v,kv.ie,m_data.n0),
                                       vort);
-#endif
 
     if (m_theta_hydrostatic_mode) {
-#if 0
       // In nh mode, gradphinh has already been computed, but in hydro mode
       // we skip the whole compute_w_and_phi_tens call
       m_sphere_ops.gradient_sphere(kv,Homme::subview(m_state.m_phinh_i,kv.ie,m_data.n0),
                                       Homme::subview(m_buffers.grad_phinh_i,kv.team_idx));
-#endif
       kv.team_barrier();
     } else {
       // Compute average(w^2/2)
@@ -1587,18 +1593,16 @@ struct CaarFunctorImpl {
         ColumnOps::compute_midpoint_values<CombineMode::Scale>(kv, w_sq, Homme::subview(m_buffers.temp,kv.team_idx,igp,jgp),0.5);
       });
       kv.team_barrier();
-
       // Compute grad(average(w^2/2)). Store in wvor.
       m_sphere_ops.gradient_sphere(kv, Homme::subview(m_buffers.temp,kv.team_idx),
                                        wvor);
 
-#if 0
       // Compute grad(w)
       m_sphere_ops.gradient_sphere(kv, Homme::subview(m_state.m_w_i,kv.ie,m_data.n0),
                                        Homme::subview(m_buffers.v_i,kv.team_idx));
-#endif
       kv.team_barrier();
     }
+#endif
 
     // Compute grad(exner)
     // Note: exner = (pi/p0)^k, therefore grad(exner) = k*(exner/pi)*grad(pi).
