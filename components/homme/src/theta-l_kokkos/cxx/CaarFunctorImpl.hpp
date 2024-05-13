@@ -719,8 +719,6 @@ struct CaarFunctorImpl {
 
       } else { // AdvectionForm::NonConservative
 
-        auto buffers_grad_tmp = viewAsReal(m_buffers.grad_tmp);
-
         Kokkos::parallel_for(
           "caar compute_dp_and_theta_tens conservative",
           SphereBlockOps::policy(m_num_elems, 1),
@@ -744,6 +742,31 @@ struct CaarFunctorImpl {
             else buffers_theta_tens(b.e,b.x,b.y,b.z) += theta_tens;
           });
       }
+
+      auto buffers_vort = viewAsReal(m_buffers.vort);
+      auto &geometry_fcor = m_geometry.m_fcor;
+      const bool pgrad_correction = m_pgrad_correction;
+
+      Kokkos::parallel_for(
+        "caar compute_v_tens",
+        SphereBlockOps::policy(m_num_elems, 6),
+        KOKKOS_LAMBDA(const Team &team) {
+
+          SphereBlockOps b(sg, team);
+          if (b.skip()) return;
+
+          const Real v0 = state_v(b.e,data_n0,0,b.x,b.y,b.z);
+          const Real v1 = state_v(b.e,data_n0,1,b.x,b.y,b.z);
+
+          SphereBlockScratch ttmp3(b);
+          SphereBlockScratch ttmp4(b);
+          b.vortInit(ttmp3, ttmp4, v0, v1);
+
+          b.barrier();
+
+          const Real vort = b.vort(ttmp3, ttmp4) + geometry_fcor(b.e,b.x,b.y);
+          buffers_vort(b.e,b.x,b.y,b.z) = vort;
+        });
 
       // TREY
 
@@ -1521,9 +1544,11 @@ struct CaarFunctorImpl {
     auto mgrad = Homme::subview(m_buffers.mgrad,kv.team_idx);
     auto grad_tmp = Homme::subview(m_buffers.grad_tmp,kv.team_idx);
 
+#if 0
     // Compute vorticity(v)
     m_sphere_ops.vorticity_sphere(kv, Homme::subview(m_state.m_v,kv.ie,m_data.n0),
                                       vort);
+#endif
 
     if (m_theta_hydrostatic_mode) {
       // In nh mode, gradphinh has already been computed, but in hydro mode
@@ -1667,7 +1692,9 @@ struct CaarFunctorImpl {
         KE(ilev) += v(ilev)*v(ilev);
         KE(ilev) /= 2.0;
 
+#if 0
         vort(igp,jgp,ilev) += fcor;
+#endif
       });
     });
     kv.team_barrier();

@@ -1307,12 +1307,14 @@ struct SphereBlockOps {
 
   KOKKOS_INLINE_FUNCTION Real vort(const SphereBlockScratch &t0, const SphereBlockScratch &t1)
   {
-    Real dvmdu = 0;
+    Real du = 0;
+    Real dv = 0;
     for (int j = 0; j < NP; j++) {
-      dvmdu += dvvy[j] * t1(x,j) - dvvx[j] * t0(j,y);
+      du += dvvx[j] * t0(j,y);
+      dv += dvvy[j] * t1(x,j);
     }
     if (rrdmd == 0) rrdmd = (1.0 / metdet) * scale_factor_inv;
-    return dvmdu * rrdmd;
+    return (dv - du) * rrdmd;
   }
 
   KOKKOS_INLINE_FUNCTION void vortInit(SphereBlockScratch &t0, SphereBlockScratch &t1, const Real v0, const Real v1) const
