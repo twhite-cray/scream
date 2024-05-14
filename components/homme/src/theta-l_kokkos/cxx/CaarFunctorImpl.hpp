@@ -875,6 +875,20 @@ struct CaarFunctorImpl {
           vtheta_np1 += theta_tens;
           state_vtheta_dp(c.e,data_np1,c.x,c.y,c.z) = vtheta_np1;
 
+          Real u_tens = buffers_v_tens(c.e,0,c.x,c.y,c.z);
+          u_tens *= -scale1_dt_spheremp;
+          Real u_np1 = state_v(c.e,data_nm1,0,c.x,c.y,c.z);
+          u_np1 *= scale3_spheremp;
+          u_np1 += u_tens;
+          state_v(c.e,data_np1,0,c.x,c.y,c.z) = u_np1;
+
+          Real v_tens = buffers_v_tens(c.e,1,c.x,c.y,c.z);
+          v_tens *= -scale1_dt_spheremp;
+          Real v_np1 = state_v(c.e,data_nm1,1,c.x,c.y,c.z);
+          v_np1 *= scale3_spheremp;
+          v_np1 += v_tens;
+          state_v(c.e,data_np1,1,c.x,c.y,c.z) = v_np1;
+
           if (!theta_hydrostatic_mode) {
 
             const Real dt_spheremp = data_dt * spheremp;
@@ -908,13 +922,17 @@ struct CaarFunctorImpl {
       // TREY
 
     }
+    Kokkos::fence();
+    GPTLstop("caar compute");
 
+#if 0
     int nerr;
     Kokkos::parallel_reduce("caar loop pre-boundary exchange", m_policy_pre, *this, nerr);
     Kokkos::fence();
     GPTLstop("caar compute");
     if (nerr > 0)
       check_print_abort_on_bad_elems("CaarFunctorImpl::run TagPreExchange", data.n0);
+#endif
 
     GPTLstart("caar_bexchV");
     m_bes[data.np1]->exchange(m_geometry.m_rspheremp);
@@ -940,7 +958,6 @@ struct CaarFunctorImpl {
 
     KernelVariables kv(team, m_tu);
 
-#if 0
     // =========== EPOCH 1 =========== //
     compute_div_vdp(kv);
 
@@ -984,7 +1001,6 @@ struct CaarFunctorImpl {
       compute_w_and_phi_np1(kv);
     }
     compute_dp3d_and_theta_np1(kv);
-#endif // TREY
 
     // ============= EPOCH 5 =========== //
     // v_tens has been computed after last barrier. Need to make sure it's done
