@@ -836,12 +836,12 @@ struct CaarFunctorImpl {
           Real grad_v0, grad_v1;
           b.grad(grad_v0, grad_v1, ttmp5);
 
-          Real u_tens = (rsplit) ? buffers_v_tens(b.e,0,b.x,b.y,b.z) : 0;
-          Real v_tens = (rsplit) ? buffers_v_tens(b.e,1,b.x,b.y,b.z) : 0;
+          Real u_tens = (rsplit) ? 0 : buffers_v_tens(b.e,0,b.x,b.y,b.z);
+          Real v_tens = (rsplit) ? 0 : buffers_v_tens(b.e,1,b.x,b.y,b.z);
           u_tens += grad_v0;
           v_tens += grad_v1;
-          //buffers_v_tens(b.e,0,b.x,b.y,b.z) = u_tens;
-          //buffers_v_tens(b.e,1,b.x,b.y,b.z) = v_tens;
+          buffers_v_tens(b.e,0,b.x,b.y,b.z) = u_tens;
+          buffers_v_tens(b.e,1,b.x,b.y,b.z) = v_tens;
 
         });
 
@@ -1675,7 +1675,6 @@ struct CaarFunctorImpl {
       m_sphere_ops.gradient_sphere(kv, log_exner,
                                        grad_tmp);
     }
-#endif
     kv.team_barrier();
 
     // Scalar w_vor,mgrad,w_gradw,gradw2;
@@ -1687,7 +1686,6 @@ struct CaarFunctorImpl {
       auto wvor_x = Homme::subview(wvor,0,igp,jgp);
       auto wvor_y = Homme::subview(wvor,1,igp,jgp);
 
-#if 0
       if (!m_theta_hydrostatic_mode) {
         // Compute wvor = grad(average(w^2/2)) - average(w*grad(w))
         // Note: vtens is already storing grad(avg(w^2/2))
@@ -1715,12 +1713,10 @@ struct CaarFunctorImpl {
           wvor_y(ilev) = 0;
         });
       }
-#endif
 
       auto mgrad_x = Homme::subview(mgrad,0,igp,jgp);
       auto mgrad_y = Homme::subview(mgrad,1,igp,jgp);
 
-#if 0
       // Compute mgrad = average(dpnh_dp_i*grad(phinh_i))
       const auto phinh_i_x = Homme::subview(m_buffers.grad_phinh_i,kv.team_idx,0,igp,jgp);
       const auto phinh_i_y = Homme::subview(m_buffers.grad_phinh_i,kv.team_idx,1,igp,jgp);
@@ -1758,7 +1754,6 @@ struct CaarFunctorImpl {
           mgrad_y(ilev) += cp*T0*(grad_tmp_i_y(ilev) - grad_exner_i_y(ilev)/exner_i(ilev));
         });
       }
-#endif // TREY
       kv.team_barrier();
 
       // Compute KE. Also, add fcor to vort
@@ -1772,9 +1767,7 @@ struct CaarFunctorImpl {
         KE(ilev) += v(ilev)*v(ilev);
         KE(ilev) /= 2.0;
 
-#if 0
         vort(igp,jgp,ilev) += fcor;
-#endif
       });
     });
     kv.team_barrier();
@@ -1789,6 +1782,7 @@ struct CaarFunctorImpl {
       m_sphere_ops.gradient_sphere(kv, Homme::subview(m_buffers.temp,kv.team_idx),
                                        Homme::subview(m_buffers.v_tens,kv.team_idx));
     }
+#endif // TREY
 
     Kokkos::parallel_for(Kokkos::TeamThreadRange(kv.team,NP*NP),
                          [&](const int idx) {
