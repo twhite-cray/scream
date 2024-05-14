@@ -753,10 +753,6 @@ struct CaarFunctorImpl {
           });
       }
 
-      auto buffers_grad_exner = viewAsReal(m_buffers.grad_exner);
-      auto buffers_grad_tmp = viewAsReal(m_buffers.grad_tmp);
-      auto buffers_mgrad = viewAsReal(m_buffers.mgrad);
-      auto buffers_vort = viewAsReal(m_buffers.vort);
       auto &geometry_fcor = m_geometry.m_fcor;
       const bool pgrad_correction = m_pgrad_correction;
 
@@ -795,13 +791,9 @@ struct CaarFunctorImpl {
             wvor_x -= 0.5 * (buffers_grad_w_i(b.e,0,b.x,b.y,b.z) * state_w_i(b.e,data_n0,b.x,b.y,b.z) + buffers_grad_w_i(b.e,0,b.x,b.y,b.z+1) * state_w_i(b.e,data_n0,b.x,b.y,b.z+1));
             wvor_y -= 0.5 * (buffers_grad_w_i(b.e,1,b.x,b.y,b.z) * state_w_i(b.e,data_n0,b.x,b.y,b.z) + buffers_grad_w_i(b.e,1,b.x,b.y,b.z+1) * state_w_i(b.e,data_n0,b.x,b.y,b.z+1));
           }
-          buffers_vdp(b.e,0,b.x,b.y,b.z) = wvor_x;
-          buffers_vdp(b.e,1,b.x,b.y,b.z) = wvor_y;
 
           Real grad_exner0, grad_exner1;
           b.grad(grad_exner0, grad_exner1, ttmp1);
-          buffers_grad_exner(b.e,0,b.x,b.y,b.z) = grad_exner0;
-          buffers_grad_exner(b.e,1,b.x,b.y,b.z) = grad_exner1;
 
           Real mgrad_x, mgrad_y;
           if (theta_hydrostatic_mode) {
@@ -822,16 +814,9 @@ struct CaarFunctorImpl {
             constexpr Real cpt0 = PC::cp * (PC::Tref - PC::Tref_lapse_rate * PC::Tref * PC::cp / PC::g);
             mgrad_x += cpt0 * (grad_lexner0 - grad_exner0 / exneriz);
             mgrad_y += cpt0 * (grad_lexner1 - grad_exner1 / exneriz);
-
-            buffers_grad_tmp(b.e,0,b.x,b.y,b.z) = grad_lexner0;
-            buffers_grad_tmp(b.e,1,b.x,b.y,b.z) = grad_lexner1;
           }
 
-          buffers_mgrad(b.e,0,b.x,b.y,b.z) = mgrad_x;
-          buffers_mgrad(b.e,1,b.x,b.y,b.z) = mgrad_y;
-
           const Real vort = b.vort(ttmp3, ttmp4) + geometry_fcor(b.e,b.x,b.y);
-          buffers_vort(b.e,b.x,b.y,b.z) = vort;
 
           Real grad_v0, grad_v1;
           b.grad(grad_v0, grad_v1, ttmp5);
@@ -853,7 +838,6 @@ struct CaarFunctorImpl {
 
           buffers_v_tens(b.e,0,b.x,b.y,b.z) = u_tens;
           buffers_v_tens(b.e,1,b.x,b.y,b.z) = v_tens;
-
         });
 
       // TREY
@@ -1632,7 +1616,6 @@ struct CaarFunctorImpl {
     auto mgrad = Homme::subview(m_buffers.mgrad,kv.team_idx);
     auto grad_tmp = Homme::subview(m_buffers.grad_tmp,kv.team_idx);
 
-#if 0
     // Compute vorticity(v)
     m_sphere_ops.vorticity_sphere(kv, Homme::subview(m_state.m_v,kv.ie,m_data.n0),
                                       vort);
@@ -1793,7 +1776,6 @@ struct CaarFunctorImpl {
       m_sphere_ops.gradient_sphere(kv, Homme::subview(m_buffers.temp,kv.team_idx),
                                        Homme::subview(m_buffers.v_tens,kv.team_idx));
     }
-#endif // TREY
 
     Kokkos::parallel_for(Kokkos::TeamThreadRange(kv.team,NP*NP),
                          [&](const int idx) {
