@@ -840,6 +840,17 @@ struct CaarFunctorImpl {
           Real v_tens = (rsplit) ? 0 : buffers_v_tens(b.e,1,b.x,b.y,b.z);
           u_tens += grad_v0;
           v_tens += grad_v1;
+
+          const Real cp_vtheta = PhysicalConstants::cp * (state_vtheta_dp(b.e,data_n0,b.x,b.y,b.z) / state_dp3d(b.e,data_n0,b.x,b.y,b.z));
+          u_tens += cp_vtheta * grad_exner0;
+          v_tens += cp_vtheta * grad_exner1;
+
+          u_tens += mgrad_x + wvor_x;
+          v_tens += mgrad_y + wvor_y;
+
+          u_tens -= v1 * vort;
+          v_tens += v0 * vort;
+
           buffers_v_tens(b.e,0,b.x,b.y,b.z) = u_tens;
           buffers_v_tens(b.e,1,b.x,b.y,b.z) = v_tens;
 
@@ -913,12 +924,12 @@ struct CaarFunctorImpl {
     }
 
     compute_dp_and_theta_tens (kv);
-#endif // TREY
 
     // ============= EPOCH 4 =========== //
     // compute_v_tens reuses some buffers used by compute_dp_and_theta_tens 
     kv.team_barrier();
     compute_v_tens (kv);
+#endif // TREY
 
     // Update states
     if (!m_theta_hydrostatic_mode) {
