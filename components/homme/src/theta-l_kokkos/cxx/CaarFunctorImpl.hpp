@@ -488,8 +488,8 @@ struct CaarFunctorImpl {
 
             const SphereColOps c(sg, team);
 
-            const Real dm = (c.z > 0) ? state_dp3d(c.e,data_n0,c.x,c.y,c.z-1) : 0;
-            const Real dz = (c.z < NUM_PHYSICAL_LEV) ? state_dp3d(c.e,data_n0,c.x,c.y,c.z) : 0;
+            const Real dm = (c.z == 0) ? 0 : state_dp3d(c.e,data_n0,c.x,c.y,c.z-1);
+            const Real dz = (c.z == NUM_PHYSICAL_LEV) ? 0 : state_dp3d(c.e,data_n0,c.x,c.y,c.z);
             const Real dp_i = (c.z == 0) ? dz : (c.z == NUM_PHYSICAL_LEV) ? dm : 0.5 * (dz + dm);
             buffers_dp_i(c.e,c.x,c.y,c.z) = dp_i;
 
@@ -653,7 +653,7 @@ struct CaarFunctorImpl {
       if (theta_hydrostatic_mode) {
 
         Kokkos::parallel_for(
-          "caar compute_w_and_phi_tens",
+          "caar compute_w_and_phi_tens hydrostatic",
           SphereColOps::policy(m_num_elems, NUM_INTERFACE_LEV),
           KOKKOS_LAMBDA(const Team &team) {
             const SphereColOps c(sg, team);
@@ -672,7 +672,7 @@ struct CaarFunctorImpl {
         const Real ndata_scale1 = -m_data.scale1;
 
         Kokkos::parallel_for(
-          "caar compute_w_and_phi_tens",
+          "caar compute_w_and_phi_tens nonhydrostatic",
           SphereColOps::policy(m_num_elems, NUM_INTERFACE_LEV),
           KOKKOS_LAMBDA(const Team &team) {
 
@@ -698,7 +698,6 @@ struct CaarFunctorImpl {
             buffers_phi_tens(c.e,c.x,c.y,c.z) = phi_tens;
           });
       }
-
 
       if (m_theta_advection_form == AdvectionForm::Conservative) {
 
@@ -729,7 +728,7 @@ struct CaarFunctorImpl {
       } else { // AdvectionForm::NonConservative
 
         Kokkos::parallel_for(
-          "caar compute_dp_and_theta_tens conservative",
+          "caar compute_dp_and_theta_tens nonconservative",
           SphereBlockOps::policy(m_num_elems, 1),
           KOKKOS_LAMBDA(const Team &team) {
 
@@ -918,9 +917,6 @@ struct CaarFunctorImpl {
             }
           }
         });
-
-      // TREY
-
     }
     Kokkos::fence();
     GPTLstop("caar compute");
