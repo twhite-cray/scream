@@ -648,6 +648,7 @@ struct CaarFunctorImpl {
 
       auto buffers_grad_phinh_i = viewAsReal(m_buffers.grad_phinh_i);
       auto buffers_grad_w_i = viewAsReal(m_buffers.grad_w_i);
+      auto buffers_phi_tens = viewAsReal(m_buffers.phi_tens);
 
       if (theta_hydrostatic_mode) {
 
@@ -660,8 +661,6 @@ struct CaarFunctorImpl {
           });
 
       } else {
-
-        auto buffers_phi_tens = viewAsReal(m_buffers.phi_tens);
 
         auto &geometry_gradphis = m_geometry.m_gradphis;
 
@@ -863,9 +862,15 @@ struct CaarFunctorImpl {
             const Real dt_spheremp = data_dt * spheremp;
             const Real scale3_spheremp = data_scale3 * spheremp;
 
+            Real phi_tens = buffers_phi_tens(c.e,c.x,c.y,c.z);
+            phi_tens *= dt_spheremp;
+            Real phi_np1 = state_phinh_i(c.e,data_nm1,c.x,c.y,c.z);
+            phi_np1 *= scale3_spheremp;
+            phi_np1 += phi_tens;
+            state_phinh_i(c.e,data_np1,c.x,c.y,c.z) = phi_np1;
+
             Real w_tens = buffers_w_tens(c.e,c.x,c.y,c.z);
             w_tens *= dt_spheremp;
-            buffers_w_tens(c.e,c.x,c.y,c.z) = w_tens;
             Real w_np1 = state_w_i(c.e,data_nm1,c.x,c.y,c.z);
             w_np1 *= scale3_spheremp;
             w_np1 += w_tens;
@@ -956,12 +961,12 @@ struct CaarFunctorImpl {
     // compute_v_tens reuses some buffers used by compute_dp_and_theta_tens 
     kv.team_barrier();
     compute_v_tens (kv);
-#endif // TREY
 
     // Update states
     if (!m_theta_hydrostatic_mode) {
       compute_w_and_phi_np1(kv);
     }
+#endif // TREY
     compute_dp3d_and_theta_np1(kv);
 
     // ============= EPOCH 5 =========== //
@@ -1491,13 +1496,11 @@ struct CaarFunctorImpl {
       Kokkos::parallel_for(Kokkos::ThreadVectorRange(kv.team,NUM_LEV),
                            [&](const int ilev) {
 
-#if 0
         // Add w_tens to w_nm1 and multiply by spheremp
         w_tens(ilev) *= m_data.dt*spheremp;
         w_np1(ilev) = m_state.m_w_i(kv.ie,m_data.nm1,igp,jgp,ilev);
         w_np1(ilev) *= m_data.scale3*spheremp;
         w_np1(ilev) += w_tens(ilev);
-#endif
 
         // Add phi_tens to phi_nm1 and multiply by spheremp
         // temp *= m_data.dt*spheremp;
@@ -1507,7 +1510,6 @@ struct CaarFunctorImpl {
         phi_np1(ilev) += phi_tens(ilev);
       });
 
-#if 0
       // Last interface only for w, not phi (since phi=phis there)
       Kokkos::single(Kokkos::PerThread(kv.team),[&](){
         using Info = ColInfo<NUM_INTERFACE_LEV>;
@@ -1527,7 +1529,6 @@ struct CaarFunctorImpl {
           w_np1(ilev)[ivec] += w_tens(ilev)[ivec];
         }
       });
-#endif
     });
   }
 
