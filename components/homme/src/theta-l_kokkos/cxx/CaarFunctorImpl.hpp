@@ -784,25 +784,33 @@ struct CaarFunctorImpl {
 
           b.barrier();
 
-          Real wvor_x = 0;
-          Real wvor_y = 0;
-          if (!theta_hydrostatic_mode) {
-            b.grad(wvor_x, wvor_y, ttmp0);
-            wvor_x -= 0.5 * (buffers_grad_w_i(b.e,0,b.x,b.y,b.z) * state_w_i(b.e,data_n0,b.x,b.y,b.z) + buffers_grad_w_i(b.e,0,b.x,b.y,b.z+1) * state_w_i(b.e,data_n0,b.x,b.y,b.z+1));
-            wvor_y -= 0.5 * (buffers_grad_w_i(b.e,1,b.x,b.y,b.z) * state_w_i(b.e,data_n0,b.x,b.y,b.z) + buffers_grad_w_i(b.e,1,b.x,b.y,b.z+1) * state_w_i(b.e,data_n0,b.x,b.y,b.z+1));
-          }
+          Real grad_v0, grad_v1;
+          b.grad(grad_v0, grad_v1, ttmp5);
+
+          Real u_tens = (rsplit) ? 0 : buffers_v_tens(b.e,0,b.x,b.y,b.z);
+          Real v_tens = (rsplit) ? 0 : buffers_v_tens(b.e,1,b.x,b.y,b.z);
+          u_tens += grad_v0;
+          v_tens += grad_v1;
+
+          const Real cp_vtheta = PhysicalConstants::cp * (state_vtheta_dp(b.e,data_n0,b.x,b.y,b.z) / state_dp3d(b.e,data_n0,b.x,b.y,b.z));
 
           Real grad_exner0, grad_exner1;
           b.grad(grad_exner0, grad_exner1, ttmp1);
+
+          u_tens += cp_vtheta * grad_exner0;
+          v_tens += cp_vtheta * grad_exner1;
 
           Real mgrad_x, mgrad_y;
           if (theta_hydrostatic_mode) {
 
             mgrad_x = 0.5 * (buffers_grad_phinh_i(b.e,0,b.x,b.y,b.z) + buffers_grad_phinh_i(b.e,0,b.x,b.y,b.z+1));
             mgrad_y = 0.5 * (buffers_grad_phinh_i(b.e,1,b.x,b.y,b.z) + buffers_grad_phinh_i(b.e,1,b.x,b.y,b.z+1));
+
           } else {
+
             mgrad_x = 0.5 * (buffers_grad_phinh_i(b.e,0,b.x,b.y,b.z) * buffers_dpnh_dp_i(b.e,b.x,b.y,b.z) + buffers_grad_phinh_i(b.e,0,b.x,b.y,b.z+1) * buffers_dpnh_dp_i(b.e,b.x,b.y,b.z+1));
             mgrad_y = 0.5 * (buffers_grad_phinh_i(b.e,1,b.x,b.y,b.z) * buffers_dpnh_dp_i(b.e,b.x,b.y,b.z) + buffers_grad_phinh_i(b.e,1,b.x,b.y,b.z+1) * buffers_dpnh_dp_i(b.e,b.x,b.y,b.z+1));
+
           }
 
           if (pgrad_correction) {
@@ -816,23 +824,18 @@ struct CaarFunctorImpl {
             mgrad_y += cpt0 * (grad_lexner1 - grad_exner1 / exneriz);
           }
 
-          const Real vort = b.vort(ttmp3, ttmp4) + geometry_fcor(b.e,b.x,b.y);
-
-          Real grad_v0, grad_v1;
-          b.grad(grad_v0, grad_v1, ttmp5);
-
-          Real u_tens = (rsplit) ? 0 : buffers_v_tens(b.e,0,b.x,b.y,b.z);
-          Real v_tens = (rsplit) ? 0 : buffers_v_tens(b.e,1,b.x,b.y,b.z);
-          u_tens += grad_v0;
-          v_tens += grad_v1;
-
-          const Real cp_vtheta = PhysicalConstants::cp * (state_vtheta_dp(b.e,data_n0,b.x,b.y,b.z) / state_dp3d(b.e,data_n0,b.x,b.y,b.z));
-          u_tens += cp_vtheta * grad_exner0;
-          v_tens += cp_vtheta * grad_exner1;
+          Real wvor_x = 0;
+          Real wvor_y = 0;
+          if (!theta_hydrostatic_mode) {
+            b.grad(wvor_x, wvor_y, ttmp0);
+            wvor_x -= 0.5 * (buffers_grad_w_i(b.e,0,b.x,b.y,b.z) * state_w_i(b.e,data_n0,b.x,b.y,b.z) + buffers_grad_w_i(b.e,0,b.x,b.y,b.z+1) * state_w_i(b.e,data_n0,b.x,b.y,b.z+1));
+            wvor_y -= 0.5 * (buffers_grad_w_i(b.e,1,b.x,b.y,b.z) * state_w_i(b.e,data_n0,b.x,b.y,b.z) + buffers_grad_w_i(b.e,1,b.x,b.y,b.z+1) * state_w_i(b.e,data_n0,b.x,b.y,b.z+1));
+          }
 
           u_tens += mgrad_x + wvor_x;
           v_tens += mgrad_y + wvor_y;
 
+          const Real vort = b.vort(ttmp3, ttmp4) + geometry_fcor(b.e,b.x,b.y);
           u_tens -= v1 * vort;
           v_tens += v0 * vort;
 
