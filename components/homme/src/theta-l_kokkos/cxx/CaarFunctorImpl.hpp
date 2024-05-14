@@ -526,6 +526,7 @@ struct CaarFunctorImpl {
       }
 
       auto buffers_theta_tens = viewAsReal(m_buffers.theta_tens);
+      auto buffers_v_tens = viewAsReal(m_buffers.v_tens);
       auto state_w_i = viewAsReal(m_state.m_w_i);
 
       if (rsplit == 0) {
@@ -557,8 +558,6 @@ struct CaarFunctorImpl {
                 buffers_eta_dot_dpdn(s.e,s.x,s.y,0) = buffers_eta_dot_dpdn(s.e,s.x,s.y,NUM_PHYSICAL_LEV) = 0;
               });
           });
-
-        auto buffers_v_tens = viewAsReal(m_buffers.v_tens);
 
         auto derived_eta_dot_dpdn = viewAsReal(m_derived.m_eta_dot_dpdn);
 
@@ -785,6 +784,8 @@ struct CaarFunctorImpl {
           SphereBlockScratch ttmp4(b);
           b.vortInit(ttmp3, ttmp4, v0, v1);
 
+          const SphereBlockScratch ttmp5(b, 0.5 * (v0 * v0 + v1 * v1));
+
           b.barrier();
 
           Real wvor_x = 0;
@@ -797,6 +798,11 @@ struct CaarFunctorImpl {
           buffers_vdp(b.e,0,b.x,b.y,b.z) = wvor_x;
           buffers_vdp(b.e,1,b.x,b.y,b.z) = wvor_y;
 
+          Real grad_exner0, grad_exner1;
+          b.grad(grad_exner0, grad_exner1, ttmp1);
+          buffers_grad_exner(b.e,0,b.x,b.y,b.z) = grad_exner0;
+          buffers_grad_exner(b.e,1,b.x,b.y,b.z) = grad_exner1;
+
           Real mgrad_x, mgrad_y;
           if (theta_hydrostatic_mode) {
 
@@ -806,23 +812,37 @@ struct CaarFunctorImpl {
             mgrad_x = 0.5 * (buffers_grad_phinh_i(b.e,0,b.x,b.y,b.z) * buffers_dpnh_dp_i(b.e,b.x,b.y,b.z) + buffers_grad_phinh_i(b.e,0,b.x,b.y,b.z+1) * buffers_dpnh_dp_i(b.e,b.x,b.y,b.z+1));
             mgrad_y = 0.5 * (buffers_grad_phinh_i(b.e,1,b.x,b.y,b.z) * buffers_dpnh_dp_i(b.e,b.x,b.y,b.z) + buffers_grad_phinh_i(b.e,1,b.x,b.y,b.z+1) * buffers_dpnh_dp_i(b.e,b.x,b.y,b.z+1));
           }
-          buffers_mgrad(b.e,0,b.x,b.y,b.z) = mgrad_x;
-          buffers_mgrad(b.e,1,b.x,b.y,b.z) = mgrad_y;
-
-          Real grad_exner0, grad_exner1;
-          b.grad(grad_exner0, grad_exner1, ttmp1);
-          buffers_grad_exner(b.e,0,b.x,b.y,b.z) = grad_exner0;
-          buffers_grad_exner(b.e,1,b.x,b.y,b.z) = grad_exner1;
 
           if (pgrad_correction) {
+
             Real grad_lexner0, grad_lexner1;
             b.grad(grad_lexner0, grad_lexner1, ttmp2);
+
+            namespace PC = PhysicalConstants;
+            constexpr Real cpt0 = PC::cp * (PC::Tref - PC::Tref_lapse_rate * PC::Tref * PC::cp / PC::g);
+            mgrad_x += cpt0 * (grad_lexner0 - grad_exner0 / exneriz);
+            mgrad_y += cpt0 * (grad_lexner1 - grad_exner1 / exneriz);
+
             buffers_grad_tmp(b.e,0,b.x,b.y,b.z) = grad_lexner0;
             buffers_grad_tmp(b.e,1,b.x,b.y,b.z) = grad_lexner1;
           }
 
+          buffers_mgrad(b.e,0,b.x,b.y,b.z) = mgrad_x;
+          buffers_mgrad(b.e,1,b.x,b.y,b.z) = mgrad_y;
+
           const Real vort = b.vort(ttmp3, ttmp4) + geometry_fcor(b.e,b.x,b.y);
           buffers_vort(b.e,b.x,b.y,b.z) = vort;
+
+          Real grad_v0, grad_v1;
+          b.grad(grad_v0, grad_v1, ttmp5);
+
+          Real u_tens = (rsplit) ? buffers_v_tens(b.e,0,b.x,b.y,b.z) : 0;
+          Real v_tens = (rsplit) ? buffers_v_tens(b.e,1,b.x,b.y,b.z) : 0;
+          u_tens += grad_v0;
+          v_tens += grad_v1;
+          //buffers_v_tens(b.e,0,b.x,b.y,b.z) = u_tens;
+          //buffers_v_tens(b.e,1,b.x,b.y,b.z) = v_tens;
+
         });
 
       // TREY
@@ -1719,7 +1739,6 @@ struct CaarFunctorImpl {
         ColumnOps::compute_midpoint_values(kv,prod_x,mgrad_x);
         ColumnOps::compute_midpoint_values(kv,prod_y,mgrad_y);
       }
-#endif
       kv.team_barrier();
 
       // Apply pgrad_correction: mgrad += cp*T0*(grad(log(exner))-grad(exner)/exner) (if applicable)
@@ -1739,6 +1758,7 @@ struct CaarFunctorImpl {
           mgrad_y(ilev) += cp*T0*(grad_tmp_i_y(ilev) - grad_exner_i_y(ilev)/exner_i(ilev));
         });
       }
+#endif // TREY
       kv.team_barrier();
 
       // Compute KE. Also, add fcor to vort
