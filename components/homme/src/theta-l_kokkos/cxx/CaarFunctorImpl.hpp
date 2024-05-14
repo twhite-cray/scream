@@ -347,6 +347,8 @@ struct CaarFunctorImpl {
 
     GPTLstart("caar compute");
 
+#define TREY
+#ifdef TREY
     {
       auto buffers_dp_tens = viewAsReal(m_buffers.dp_tens);
       auto buffers_div_vdp = viewAsReal(m_buffers.div_vdp);
@@ -906,7 +908,7 @@ struct CaarFunctorImpl {
             w_np1 += w_tens;
             state_w_i(c.e,data_np1,c.x,c.y,c.z) = w_np1;
 
-            if (c.z == 0) {
+            if (c.z == NUM_PHYSICAL_LEV-1) {
               Real w_tens = buffers_w_tens(c.e,c.x,c.y,NUM_PHYSICAL_LEV);
               w_tens *= dt_spheremp;
               buffers_w_tens(c.e,c.x,c.y,NUM_PHYSICAL_LEV) = w_tens;
@@ -921,13 +923,15 @@ struct CaarFunctorImpl {
     Kokkos::fence();
     GPTLstop("caar compute");
 
-#if 0
+#else
+
     int nerr;
     Kokkos::parallel_reduce("caar loop pre-boundary exchange", m_policy_pre, *this, nerr);
     Kokkos::fence();
     GPTLstop("caar compute");
     if (nerr > 0)
       check_print_abort_on_bad_elems("CaarFunctorImpl::run TagPreExchange", data.n0);
+
 #endif
 
     GPTLstart("caar_bexchV");
