@@ -849,6 +849,8 @@ struct CaarFunctorImpl {
 
       auto &geometry_spheremp = m_geometry.m_spheremp;
 
+      const Real scale1_dt = m_data.scale1 * m_data.dt;
+
       Kokkos::parallel_for(
         "caar compute np1",
         SphereCol::policy(m_num_elems, NUM_PHYSICAL_LEV),
@@ -856,11 +858,26 @@ struct CaarFunctorImpl {
 
           const SphereCol c(team);
 
+          const Real spheremp = geometry_spheremp(c.e,c.x,c.y);
+          const Real scale1_dt_spheremp = scale1_dt * spheremp;
+          const Real scale3_spheremp = data_scale3 * spheremp;
+
+          Real dp_tens = buffers_dp_tens(c.e,c.x,c.y,c.z);
+          dp_tens *= scale1_dt_spheremp;
+          Real dp_np1 = scale3_spheremp * state_dp3d(c.e,data_nm1,c.x,c.y,c.z);
+          dp_np1 -= dp_tens;
+          state_dp3d(c.e,data_np1,c.x,c.y,c.z) = dp_np1;
+
+          Real theta_tens = buffers_theta_tens(c.e,c.x,c.y,c.z);
+          theta_tens *= -scale1_dt_spheremp;
+          Real vtheta_np1 = state_vtheta_dp(c.e,data_nm1,c.x,c.y,c.z);
+          vtheta_np1 *= scale3_spheremp;
+          vtheta_np1 += theta_tens;
+          state_vtheta_dp(c.e,data_np1,c.x,c.y,c.z) = vtheta_np1;
+
           if (!theta_hydrostatic_mode) {
 
-            const Real spheremp = geometry_spheremp(c.e,c.x,c.y);
             const Real dt_spheremp = data_dt * spheremp;
-            const Real scale3_spheremp = data_scale3 * spheremp;
 
             Real phi_tens = buffers_phi_tens(c.e,c.x,c.y,c.z);
             phi_tens *= dt_spheremp;
@@ -966,8 +983,8 @@ struct CaarFunctorImpl {
     if (!m_theta_hydrostatic_mode) {
       compute_w_and_phi_np1(kv);
     }
-#endif // TREY
     compute_dp3d_and_theta_np1(kv);
+#endif // TREY
 
     // ============= EPOCH 5 =========== //
     // v_tens has been computed after last barrier. Need to make sure it's done
