@@ -2,10 +2,14 @@
 
 namespace Homme {
 
+template <bool HYDROSTATIC>
 void CaarFunctorImpl::epoch1(const SphereGlobal &sg)
 {
   auto buffers_dp_tens = viewAsReal(m_buffers.dp_tens);
   auto buffers_div_vdp = viewAsReal(m_buffers.div_vdp);
+  auto buffers_exner = viewAsReal(m_buffers.exner);
+  auto buffers_phi = viewAsReal(m_buffers.phi);
+  auto buffers_pnh = viewAsReal(m_buffers.pnh);
   auto buffers_vdp = viewAsReal(m_buffers.vdp);
 
   const Real data_eta_ave_w = m_data.eta_ave_w;
@@ -14,15 +18,27 @@ void CaarFunctorImpl::epoch1(const SphereGlobal &sg)
   auto derived_vn0 = viewAsReal(m_derived.m_vn0);
 
   auto state_dp3d = viewAsReal(m_state.m_dp3d);
+  auto state_phinh_i = viewAsReal(m_state.m_phinh_i);
   auto state_v = viewAsReal(m_state.m_v);
+  auto state_vtheta_dp= viewAsReal(m_state.m_vtheta_dp);
 
   Kokkos::parallel_for(
-    "caar epoch0 before scans",
+    "caar epoch1 before scans",
     SphereBlockOps::policy(m_num_elems, 2),
     KOKKOS_LAMBDA(const Team &team) {
 
       SphereBlockOps b(sg, team);
       if (b.skip()) return;
+
+      if (!HYDROSTATIC) {
+
+        const Real dphi = state_phinh_i(b.e,data_n0,b.x,b.y,b.z+1) - state_phinh_i(b.e,data_n0,b.x,b.y,b.z);
+        const Real vtheta_dp = state_vtheta_dp(b.e,data_n0,b.x,b.y,b.z);
+        if ((vtheta_dp < 0) || (dphi > 0)) abort();
+        EquationOfState::compute_pnh_and_exner(vtheta_dp, dphi, buffers_pnh(b.e,b.x,b.y,b.z), buffers_exner(b.e,b.x,b.y,b.z));
+
+        buffers_phi(b.e,b.x,b.y,b.z) = 0.5 * (state_phinh_i(b.e,data_n0,b.x,b.y,b.z) + state_phinh_i(b.e,data_n0,b.x,b.y,b.z+1));
+      }
 
       const Real v0 = state_v(b.e,data_n0,0,b.x,b.y,b.z) * state_dp3d(b.e,data_n0,b.x,b.y,b.z);
       const Real v1 = state_v(b.e,data_n0,1,b.x,b.y,b.z) * state_dp3d(b.e,data_n0,b.x,b.y,b.z);
@@ -46,7 +62,9 @@ void CaarFunctorImpl::epoch1(const SphereGlobal &sg)
 void CaarFunctorImpl::caar_compute() 
 {
   const SphereGlobal sg(m_sphere_ops);
-  epoch1(sg);
+
+  if (m_theta_hydrostatic_mode) epoch1<true>(sg);
+  else epoch1<false>(sg);
 
   auto buffers_dp_tens = viewAsReal(m_buffers.dp_tens);
   auto buffers_div_vdp = viewAsReal(m_buffers.div_vdp);
@@ -102,16 +120,7 @@ void CaarFunctorImpl::caar_compute()
         buffers_exner(b.e,b.x,b.y,b.z) = exner;
         buffers_pnh(b.e,b.x,b.y,b.z) = EquationOfState::compute_dphi(state_vtheta_dp(b.e,data_n0,b.x,b.y,b.z), exner, pi);
 
-      } else {
-
-        const Real dphi = state_phinh_i(b.e,data_n0,b.x,b.y,b.z+1) - state_phinh_i(b.e,data_n0,b.x,b.y,b.z);
-        const Real vtheta_dp = state_vtheta_dp(b.e,data_n0,b.x,b.y,b.z);
-        if ((vtheta_dp < 0) || (dphi > 0)) abort();
-        EquationOfState::compute_pnh_and_exner(vtheta_dp, dphi, buffers_pnh(b.e,b.x,b.y,b.z), buffers_exner(b.e,b.x,b.y,b.z));
-
-        buffers_phi(b.e,b.x,b.y,b.z) = 0.5 * (state_phinh_i(b.e,data_n0,b.x,b.y,b.z) + state_phinh_i(b.e,data_n0,b.x,b.y,b.z+1));
       }
-
       b.barrier();
 
       Real grad0, grad1;
