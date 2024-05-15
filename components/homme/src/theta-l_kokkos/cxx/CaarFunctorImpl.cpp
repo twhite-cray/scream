@@ -3,7 +3,7 @@
 namespace Homme {
 
 template <bool HYDROSTATIC>
-void CaarFunctorImpl::epoch1(const SphereGlobal &sg)
+void CaarFunctorImpl::first(const SphereGlobal &sg)
 {
   auto buffers_dp_tens = viewAsReal(m_buffers.dp_tens);
   auto buffers_div_vdp = viewAsReal(m_buffers.div_vdp);
@@ -23,7 +23,7 @@ void CaarFunctorImpl::epoch1(const SphereGlobal &sg)
   auto state_vtheta_dp= viewAsReal(m_state.m_vtheta_dp);
 
   Kokkos::parallel_for(
-    "caar epoch1 before scans",
+    "caar first",
     SphereBlockOps::policy(m_num_elems, 2),
     KOKKOS_LAMBDA(const Team &team) {
 
@@ -59,12 +59,34 @@ void CaarFunctorImpl::epoch1(const SphereGlobal &sg)
     });
 }
 
+void CaarFunctorImpl::scans()
+{
+  auto buffers_div_vdp = viewAsReal(m_buffers.div_vdp);
+  auto buffers_dp_i = viewAsReal(m_buffers.dp_i);
+  auto buffers_w_tens = viewAsReal(m_buffers.w_tens);
+
+  const int data_n0 = m_data.n0;
+  const Real pi_i00 = m_hvcoord.ps0 * m_hvcoord.hybrid_ai0;
+  auto state_dp3d = viewAsReal(m_state.m_dp3d);
+
+  Kokkos::parallel_for(
+    "caar scans",
+    SphereScanOps::policy(m_num_elems),
+    KOKKOS_LAMBDA(const Team &team) {
+      const SphereScanOps s(team);
+      s.scan(buffers_dp_i, state_dp3d, data_n0, pi_i00);
+      s.scan(buffers_w_tens, buffers_div_vdp, 0);
+    });
+}
+
 void CaarFunctorImpl::caar_compute() 
 {
   const SphereGlobal sg(m_sphere_ops);
 
-  if (m_theta_hydrostatic_mode) epoch1<true>(sg);
-  else epoch1<false>(sg);
+  if (m_theta_hydrostatic_mode) first<true>(sg);
+  else first<false>(sg);
+
+  scans();
 
   auto buffers_dp_tens = viewAsReal(m_buffers.dp_tens);
   auto buffers_div_vdp = viewAsReal(m_buffers.div_vdp);
@@ -80,15 +102,6 @@ void CaarFunctorImpl::caar_compute()
   auto buffers_omega_i = viewAsReal(m_buffers.w_tens);
 
   const Real pi_i00 = m_hvcoord.ps0 * m_hvcoord.hybrid_ai0;
-
-  Kokkos::parallel_for(
-    "caar compute_scan_quantities scans",
-    SphereScanOps::policy(m_num_elems),
-    KOKKOS_LAMBDA(const Team &team) {
-      const SphereScanOps s(team);
-      s.scan(buffers_dp_i, state_dp3d, data_n0, pi_i00);
-      s.scan(buffers_omega_i, buffers_div_vdp, 0);
-    });
 
   auto buffers_exner = viewAsReal(m_buffers.exner);
   auto buffers_omega_p = viewAsReal(m_buffers.omega_p);
