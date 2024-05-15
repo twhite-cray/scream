@@ -3,7 +3,7 @@
 namespace Homme {
 
 template <bool HYDROSTATIC>
-void CaarFunctorImpl::first(const SphereGlobal &sg)
+void CaarFunctorImpl::first()
 {
   auto buffers_dp_tens = viewAsReal(m_buffers.dp_tens);
   auto buffers_div_vdp = viewAsReal(m_buffers.div_vdp);
@@ -17,13 +17,15 @@ void CaarFunctorImpl::first(const SphereGlobal &sg)
 
   auto derived_vn0 = viewAsReal(m_derived.m_vn0);
 
+  const SphereGlobal sg(m_sphere_ops);
+
   auto state_dp3d = viewAsReal(m_state.m_dp3d);
   auto state_phinh_i = viewAsReal(m_state.m_phinh_i);
   auto state_v = viewAsReal(m_state.m_v);
   auto state_vtheta_dp= viewAsReal(m_state.m_vtheta_dp);
 
   Kokkos::parallel_for(
-    "caar first",
+    "caar_compute first",
     SphereBlockOps::policy(m_num_elems, 2),
     KOKKOS_LAMBDA(const Team &team) {
 
@@ -70,7 +72,7 @@ void CaarFunctorImpl::scans()
   auto state_dp3d = viewAsReal(m_state.m_dp3d);
 
   Kokkos::parallel_for(
-    "caar scans",
+    "caar_compute scans",
     SphereScanOps::policy(m_num_elems),
     KOKKOS_LAMBDA(const Team &team) {
       const SphereScanOps s(team);
@@ -79,14 +81,108 @@ void CaarFunctorImpl::scans()
     });
 }
 
+template <bool HYDROSTATIC>
+void CaarFunctorImpl::last()
+{
+  auto buffers_dp_tens = viewAsReal(m_buffers.dp_tens);
+  auto buffers_phi_tens = viewAsReal(m_buffers.phi_tens);
+  auto buffers_theta_tens = viewAsReal(m_buffers.theta_tens);
+  auto buffers_v_tens = viewAsReal(m_buffers.v_tens);
+  auto buffers_w_tens = viewAsReal(m_buffers.w_tens);
+
+  const Real data_dt = m_data.dt;
+  const int data_nm1 = m_data.nm1;
+  const int data_np1 = m_data.np1;
+  const Real data_scale3 = m_data.scale3;
+
+  auto &geometry_spheremp = m_geometry.m_spheremp;
+
+  const Real scale1_dt = m_data.scale1 * m_data.dt;
+
+  auto state_dp3d = viewAsReal(m_state.m_dp3d);
+  auto state_phinh_i = viewAsReal(m_state.m_phinh_i);
+  auto state_v = viewAsReal(m_state.m_v);
+  auto state_vtheta_dp = viewAsReal(m_state.m_vtheta_dp);
+  auto state_w_i = viewAsReal(m_state.m_w_i);
+
+  Kokkos::parallel_for(
+    "caar_compute last",
+    SphereCol::policy(m_num_elems, NUM_PHYSICAL_LEV),
+    KOKKOS_LAMBDA(const Team &team) {
+
+      const SphereCol c(team);
+
+      const Real spheremp = geometry_spheremp(c.e,c.x,c.y);
+      const Real scale1_dt_spheremp = scale1_dt * spheremp;
+      const Real scale3_spheremp = data_scale3 * spheremp;
+
+      Real dp_tens = buffers_dp_tens(c.e,c.x,c.y,c.z);
+      dp_tens *= scale1_dt_spheremp;
+      Real dp_np1 = scale3_spheremp * state_dp3d(c.e,data_nm1,c.x,c.y,c.z);
+      dp_np1 -= dp_tens;
+      state_dp3d(c.e,data_np1,c.x,c.y,c.z) = dp_np1;
+
+      Real theta_tens = buffers_theta_tens(c.e,c.x,c.y,c.z);
+      theta_tens *= -scale1_dt_spheremp;
+      Real vtheta_np1 = state_vtheta_dp(c.e,data_nm1,c.x,c.y,c.z);
+      vtheta_np1 *= scale3_spheremp;
+      vtheta_np1 += theta_tens;
+      state_vtheta_dp(c.e,data_np1,c.x,c.y,c.z) = vtheta_np1;
+
+      Real u_tens = buffers_v_tens(c.e,0,c.x,c.y,c.z);
+      u_tens *= -scale1_dt_spheremp;
+      Real u_np1 = state_v(c.e,data_nm1,0,c.x,c.y,c.z);
+      u_np1 *= scale3_spheremp;
+      u_np1 += u_tens;
+      state_v(c.e,data_np1,0,c.x,c.y,c.z) = u_np1;
+
+      Real v_tens = buffers_v_tens(c.e,1,c.x,c.y,c.z);
+      v_tens *= -scale1_dt_spheremp;
+      Real v_np1 = state_v(c.e,data_nm1,1,c.x,c.y,c.z);
+      v_np1 *= scale3_spheremp;
+      v_np1 += v_tens;
+      state_v(c.e,data_np1,1,c.x,c.y,c.z) = v_np1;
+
+      if (!HYDROSTATIC) {
+
+        const Real dt_spheremp = data_dt * spheremp;
+
+        Real phi_tens = buffers_phi_tens(c.e,c.x,c.y,c.z);
+        phi_tens *= dt_spheremp;
+        Real phi_np1 = state_phinh_i(c.e,data_nm1,c.x,c.y,c.z);
+        phi_np1 *= scale3_spheremp;
+        phi_np1 += phi_tens;
+        state_phinh_i(c.e,data_np1,c.x,c.y,c.z) = phi_np1;
+
+        Real w_tens = buffers_w_tens(c.e,c.x,c.y,c.z);
+        w_tens *= dt_spheremp;
+        Real w_np1 = state_w_i(c.e,data_nm1,c.x,c.y,c.z);
+        w_np1 *= scale3_spheremp;
+        w_np1 += w_tens;
+        state_w_i(c.e,data_np1,c.x,c.y,c.z) = w_np1;
+
+        if (c.z == NUM_PHYSICAL_LEV-1) {
+          Real w_tens = buffers_w_tens(c.e,c.x,c.y,NUM_PHYSICAL_LEV);
+          w_tens *= dt_spheremp;
+          buffers_w_tens(c.e,c.x,c.y,NUM_PHYSICAL_LEV) = w_tens;
+          Real w_np1 = state_w_i(c.e,data_nm1,c.x,c.y,NUM_PHYSICAL_LEV);
+          w_np1 *= scale3_spheremp;
+          w_np1 += w_tens;
+          state_w_i(c.e,data_np1,c.x,c.y,NUM_PHYSICAL_LEV) = w_np1;
+        }
+      }
+    });
+}
+
 void CaarFunctorImpl::caar_compute() 
 {
-  const SphereGlobal sg(m_sphere_ops);
 
-  if (m_theta_hydrostatic_mode) first<true>(sg);
-  else first<false>(sg);
+  if (m_theta_hydrostatic_mode) first<true>();
+  else first<false>();
 
   scans();
+
+  const SphereGlobal sg(m_sphere_ops);
 
   auto buffers_dp_tens = viewAsReal(m_buffers.dp_tens);
   auto buffers_div_vdp = viewAsReal(m_buffers.div_vdp);
@@ -533,82 +629,8 @@ void CaarFunctorImpl::caar_compute()
       buffers_v_tens(b.e,1,b.x,b.y,b.z) = v_tens;
     });
 
-  const Real data_dt = m_data.dt;
-  const int data_nm1 = m_data.nm1;
-  const int data_np1 = m_data.np1;
-  const Real data_scale3 = m_data.scale3;
-
-  auto &geometry_spheremp = m_geometry.m_spheremp;
-
-  const Real scale1_dt = m_data.scale1 * m_data.dt;
-
-  Kokkos::parallel_for(
-    "caar compute np1",
-    SphereCol::policy(m_num_elems, NUM_PHYSICAL_LEV),
-    KOKKOS_LAMBDA(const Team &team) {
-
-      const SphereCol c(team);
-
-      const Real spheremp = geometry_spheremp(c.e,c.x,c.y);
-      const Real scale1_dt_spheremp = scale1_dt * spheremp;
-      const Real scale3_spheremp = data_scale3 * spheremp;
-
-      Real dp_tens = buffers_dp_tens(c.e,c.x,c.y,c.z);
-      dp_tens *= scale1_dt_spheremp;
-      Real dp_np1 = scale3_spheremp * state_dp3d(c.e,data_nm1,c.x,c.y,c.z);
-      dp_np1 -= dp_tens;
-      state_dp3d(c.e,data_np1,c.x,c.y,c.z) = dp_np1;
-
-      Real theta_tens = buffers_theta_tens(c.e,c.x,c.y,c.z);
-      theta_tens *= -scale1_dt_spheremp;
-      Real vtheta_np1 = state_vtheta_dp(c.e,data_nm1,c.x,c.y,c.z);
-      vtheta_np1 *= scale3_spheremp;
-      vtheta_np1 += theta_tens;
-      state_vtheta_dp(c.e,data_np1,c.x,c.y,c.z) = vtheta_np1;
-
-      Real u_tens = buffers_v_tens(c.e,0,c.x,c.y,c.z);
-      u_tens *= -scale1_dt_spheremp;
-      Real u_np1 = state_v(c.e,data_nm1,0,c.x,c.y,c.z);
-      u_np1 *= scale3_spheremp;
-      u_np1 += u_tens;
-      state_v(c.e,data_np1,0,c.x,c.y,c.z) = u_np1;
-
-      Real v_tens = buffers_v_tens(c.e,1,c.x,c.y,c.z);
-      v_tens *= -scale1_dt_spheremp;
-      Real v_np1 = state_v(c.e,data_nm1,1,c.x,c.y,c.z);
-      v_np1 *= scale3_spheremp;
-      v_np1 += v_tens;
-      state_v(c.e,data_np1,1,c.x,c.y,c.z) = v_np1;
-
-      if (!theta_hydrostatic_mode) {
-
-        const Real dt_spheremp = data_dt * spheremp;
-
-        Real phi_tens = buffers_phi_tens(c.e,c.x,c.y,c.z);
-        phi_tens *= dt_spheremp;
-        Real phi_np1 = state_phinh_i(c.e,data_nm1,c.x,c.y,c.z);
-        phi_np1 *= scale3_spheremp;
-        phi_np1 += phi_tens;
-        state_phinh_i(c.e,data_np1,c.x,c.y,c.z) = phi_np1;
-
-        Real w_tens = buffers_w_tens(c.e,c.x,c.y,c.z);
-        w_tens *= dt_spheremp;
-        Real w_np1 = state_w_i(c.e,data_nm1,c.x,c.y,c.z);
-        w_np1 *= scale3_spheremp;
-        w_np1 += w_tens;
-        state_w_i(c.e,data_np1,c.x,c.y,c.z) = w_np1;
-
-        if (c.z == NUM_PHYSICAL_LEV-1) {
-          Real w_tens = buffers_w_tens(c.e,c.x,c.y,NUM_PHYSICAL_LEV);
-          w_tens *= dt_spheremp;
-          buffers_w_tens(c.e,c.x,c.y,NUM_PHYSICAL_LEV) = w_tens;
-          Real w_np1 = state_w_i(c.e,data_nm1,c.x,c.y,NUM_PHYSICAL_LEV);
-          w_np1 *= scale3_spheremp;
-          w_np1 += w_tens;
-          state_w_i(c.e,data_np1,c.x,c.y,NUM_PHYSICAL_LEV) = w_np1;
-        }
-      }
-    });
+  if (m_theta_hydrostatic_mode) last<true>();
+  else last<false>();
 }
 
 }

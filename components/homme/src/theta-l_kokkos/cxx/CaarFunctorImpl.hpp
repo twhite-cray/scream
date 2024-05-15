@@ -124,8 +124,9 @@ struct CaarFunctorImpl {
   Kokkos::Array<std::shared_ptr<BoundaryExchange>, NUM_TIME_LEVELS> m_bes;
 
   private:
-  template <bool HYDROSTATIC> void first(const SphereGlobal &sg);
+  template <bool HYDROSTATIC> void first();
   void scans();
+  template <bool HYDROSTATIC> void last();
   void caar_compute();
 
   public:
