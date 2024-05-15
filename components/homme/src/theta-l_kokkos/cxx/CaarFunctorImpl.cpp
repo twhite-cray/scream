@@ -2,7 +2,7 @@
 
 namespace Homme {
 
-void CaarFunctorImpl::caar_compute() 
+void CaarFunctorImpl::epoch1(const SphereGlobal &sg)
 {
   auto buffers_dp_tens = viewAsReal(m_buffers.dp_tens);
   auto buffers_div_vdp = viewAsReal(m_buffers.div_vdp);
@@ -13,13 +13,11 @@ void CaarFunctorImpl::caar_compute()
 
   auto derived_vn0 = viewAsReal(m_derived.m_vn0);
 
-  const SphereGlobal sg(m_sphere_ops);
-
   auto state_dp3d = viewAsReal(m_state.m_dp3d);
   auto state_v = viewAsReal(m_state.m_v);
 
   Kokkos::parallel_for(
-    "caar compute_div_vdp",
+    "caar epoch0 before scans",
     SphereBlockOps::policy(m_num_elems, 2),
     KOKKOS_LAMBDA(const Team &team) {
 
@@ -43,6 +41,22 @@ void CaarFunctorImpl::caar_compute()
       buffers_div_vdp(b.e,b.x,b.y,b.z) = dvdp;
       buffers_dp_tens(b.e,b.x,b.y,b.z) = dvdp;
     });
+}
+
+void CaarFunctorImpl::caar_compute() 
+{
+  const SphereGlobal sg(m_sphere_ops);
+  epoch1(sg);
+
+  auto buffers_dp_tens = viewAsReal(m_buffers.dp_tens);
+  auto buffers_div_vdp = viewAsReal(m_buffers.div_vdp);
+  auto buffers_vdp = viewAsReal(m_buffers.vdp);
+
+  const Real data_eta_ave_w = m_data.eta_ave_w;
+  const int data_n0 = m_data.n0;
+
+  auto state_dp3d = viewAsReal(m_state.m_dp3d);
+  auto state_v = viewAsReal(m_state.m_v);
 
   auto buffers_dp_i = viewAsReal(m_buffers.dp_i);
   auto buffers_omega_i = viewAsReal(m_buffers.w_tens);
