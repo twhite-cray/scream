@@ -3,7 +3,7 @@
 namespace Homme {
 
 template <bool HYDROSTATIC>
-void CaarFunctorImpl::first()
+void CaarFunctorImpl::blockOps1()
 {
   auto buffers_dp_tens = viewAsReal(m_buffers.dp_tens);
   auto buffers_div_vdp = viewAsReal(m_buffers.div_vdp);
@@ -25,7 +25,7 @@ void CaarFunctorImpl::first()
   auto state_vtheta_dp= viewAsReal(m_state.m_vtheta_dp);
 
   Kokkos::parallel_for(
-    "caar_compute first",
+    "caar_compute blockOps1",
     SphereBlockOps::policy(m_num_elems, 2),
     KOKKOS_LAMBDA(const Team &team) {
 
@@ -61,7 +61,7 @@ void CaarFunctorImpl::first()
     });
 }
 
-void CaarFunctorImpl::scans()
+void CaarFunctorImpl::scanOps1()
 {
   auto buffers_div_vdp = viewAsReal(m_buffers.div_vdp);
   auto buffers_dp_i = viewAsReal(m_buffers.dp_i);
@@ -72,7 +72,7 @@ void CaarFunctorImpl::scans()
   auto state_dp3d = viewAsReal(m_state.m_dp3d);
 
   Kokkos::parallel_for(
-    "caar_compute scans",
+    "caar_compute scanOps1",
     SphereScanOps::policy(m_num_elems),
     KOKKOS_LAMBDA(const Team &team) {
       const SphereScanOps s(team);
@@ -82,7 +82,7 @@ void CaarFunctorImpl::scans()
 }
 
 template <bool HYDROSTATIC>
-void CaarFunctorImpl::after_scans()
+void CaarFunctorImpl::blockOps2()
 {
   auto buffers_dp_i = viewAsReal(m_buffers.dp_i);
   auto buffers_exner = viewAsReal(m_buffers.exner);
@@ -101,7 +101,7 @@ void CaarFunctorImpl::after_scans()
   auto state_vtheta_dp= viewAsReal(m_state.m_vtheta_dp);
 
   Kokkos::parallel_for(
-    "caar_compute after_scans",
+    "caar_compute blockOps2",
     SphereBlockOps::policy(m_num_elems, 1),
     KOKKOS_LAMBDA(const Team &team) {
 
@@ -129,11 +129,35 @@ void CaarFunctorImpl::after_scans()
 
       derived_omega_p(b.e,b.x,b.y,b.z) += data_eta_ave_w * omega;
     });
+}
 
+void CaarFunctorImpl::scanOps2()
+{
+  auto buffers_phi = viewAsReal(m_buffers.phi);
+  auto buffers_pnh = viewAsReal(m_buffers.pnh);
+
+  const int data_n0 = m_data.n0;
+
+  auto &geometry_phis = m_geometry.m_phis;
+
+  auto state_phinh_i = viewAsReal(m_state.m_phinh_i);
+
+  Kokkos::parallel_for(
+    "caar_compute scanOps2",
+    SphereScanOps::policy(m_num_elems),
+    KOKKOS_LAMBDA(const Team &team) {
+      const SphereScanOps s(team);
+      s.nacs(state_phinh_i, data_n0, buffers_pnh, geometry_phis);
+      Kokkos::parallel_for(
+        Kokkos::ThreadVectorRange(s.t, NUM_PHYSICAL_LEV),
+        [&](const int z) {
+          buffers_phi(s.e,s.x,s.y,z) = 0.5 * (state_phinh_i(s.e,data_n0,s.x,s.y,z) + state_phinh_i(s.e,data_n0,s.x,s.y,z+1));
+        });
+    });
 }
 
 template <bool HYDROSTATIC>
-void CaarFunctorImpl::last()
+void CaarFunctorImpl::colN()
 {
   auto buffers_dp_tens = viewAsReal(m_buffers.dp_tens);
   auto buffers_phi_tens = viewAsReal(m_buffers.phi_tens);
@@ -157,7 +181,7 @@ void CaarFunctorImpl::last()
   auto state_w_i = viewAsReal(m_state.m_w_i);
 
   Kokkos::parallel_for(
-    "caar_compute last",
+    "caar_compute colN",
     SphereCol::policy(m_num_elems, NUM_PHYSICAL_LEV),
     KOKKOS_LAMBDA(const Team &team) {
 
@@ -228,13 +252,15 @@ void CaarFunctorImpl::last()
 void CaarFunctorImpl::caar_compute() 
 {
 
-  if (m_theta_hydrostatic_mode) first<true>();
-  else first<false>();
+  if (m_theta_hydrostatic_mode) blockOps1<true>();
+  else blockOps1<false>();
 
-  scans();
+  scanOps1();
 
-  if (m_theta_hydrostatic_mode) after_scans<true>();
-  else after_scans<false>();
+  if (m_theta_hydrostatic_mode) blockOps2<true>();
+  else blockOps2<false>();
+
+  if (m_theta_hydrostatic_mode) scanOps2();
 
   const SphereGlobal sg(m_sphere_ops);
 
@@ -264,24 +290,6 @@ void CaarFunctorImpl::caar_compute()
   auto state_vtheta_dp = viewAsReal(m_state.m_vtheta_dp);
 
   const bool theta_hydrostatic_mode = m_theta_hydrostatic_mode;
-
-  if (theta_hydrostatic_mode) {
-
-    auto &geometry_phis = m_geometry.m_phis;
-
-    Kokkos::parallel_for(
-      "caar compute_phi_i",
-      SphereScanOps::policy(m_num_elems),
-      KOKKOS_LAMBDA(const Team &team) {
-        const SphereScanOps s(team);
-        s.nacs(state_phinh_i, data_n0, buffers_pnh, geometry_phis);
-        Kokkos::parallel_for(
-          Kokkos::ThreadVectorRange(s.t, NUM_PHYSICAL_LEV),
-          [&](const int z) {
-            buffers_phi(s.e,s.x,s.y,z) = 0.5 * (state_phinh_i(s.e,data_n0,s.x,s.y,z) + state_phinh_i(s.e,data_n0,s.x,s.y,z+1));
-          });
-      });
-  }
 
   auto buffers_dpnh_dp_i = viewAsReal(m_buffers.dpnh_dp_i);
   auto buffers_v_i = viewAsReal(m_buffers.v_i);
@@ -651,8 +659,8 @@ void CaarFunctorImpl::caar_compute()
       buffers_v_tens(b.e,1,b.x,b.y,b.z) = v_tens;
     });
 
-  if (m_theta_hydrostatic_mode) last<true>();
-  else last<false>();
+  if (m_theta_hydrostatic_mode) colN<true>();
+  else colN<false>();
 }
 
 }
