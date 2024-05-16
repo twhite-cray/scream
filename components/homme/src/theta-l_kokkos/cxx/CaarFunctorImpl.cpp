@@ -82,6 +82,57 @@ void CaarFunctorImpl::scans()
 }
 
 template <bool HYDROSTATIC>
+void CaarFunctorImpl::after_scans()
+{
+  auto buffers_dp_i = viewAsReal(m_buffers.dp_i);
+  auto buffers_exner = viewAsReal(m_buffers.exner);
+  auto buffers_omega_p = viewAsReal(m_buffers.omega_p);
+  auto buffers_pnh = viewAsReal(m_buffers.pnh);
+  auto buffers_w_tens = viewAsReal(m_buffers.w_tens);
+
+  const Real data_eta_ave_w = m_data.eta_ave_w;
+  const int data_n0 = m_data.n0;
+
+  auto derived_omega_p = viewAsReal(m_derived.m_omega_p);
+
+  const SphereGlobal sg(m_sphere_ops);
+
+  auto state_v = viewAsReal(m_state.m_v);
+  auto state_vtheta_dp= viewAsReal(m_state.m_vtheta_dp);
+
+  Kokkos::parallel_for(
+    "caar_compute after_scans",
+    SphereBlockOps::policy(m_num_elems, 1),
+    KOKKOS_LAMBDA(const Team &team) {
+
+      SphereBlockOps b(sg, team);
+      if (b.skip()) return;
+
+      const Real pi = 0.5 * (buffers_dp_i(b.e,b.x,b.y,b.z) + buffers_dp_i(b.e,b.x,b.y,b.z+1));
+      const SphereBlockScratch tmp0(b, pi);
+
+      if (HYDROSTATIC) {
+        Real exner = pi;
+        EquationOfState::pressure_to_exner(exner);
+        buffers_exner(b.e,b.x,b.y,b.z) = exner;
+        buffers_pnh(b.e,b.x,b.y,b.z) = EquationOfState::compute_dphi(state_vtheta_dp(b.e,data_n0,b.x,b.y,b.z), exner, pi);
+      }
+
+      b.barrier();
+
+      Real grad0, grad1;
+      b.grad(grad0, grad1, tmp0);
+
+      Real omega = -0.5 * (buffers_w_tens(b.e,b.x,b.y,b.z) + buffers_w_tens(b.e,b.x,b.y,b.z+1));
+      omega += state_v(b.e,data_n0,0,b.x,b.y,b.z) * grad0 + state_v(b.e,data_n0,1,b.x,b.y,b.z) * grad1;
+      buffers_omega_p(b.e,b.x,b.y,b.z) = omega;
+
+      derived_omega_p(b.e,b.x,b.y,b.z) += data_eta_ave_w * omega;
+    });
+
+}
+
+template <bool HYDROSTATIC>
 void CaarFunctorImpl::last()
 {
   auto buffers_dp_tens = viewAsReal(m_buffers.dp_tens);
@@ -182,6 +233,9 @@ void CaarFunctorImpl::caar_compute()
 
   scans();
 
+  if (m_theta_hydrostatic_mode) after_scans<true>();
+  else after_scans<false>();
+
   const SphereGlobal sg(m_sphere_ops);
 
   auto buffers_dp_tens = viewAsReal(m_buffers.dp_tens);
@@ -210,38 +264,6 @@ void CaarFunctorImpl::caar_compute()
   auto state_vtheta_dp = viewAsReal(m_state.m_vtheta_dp);
 
   const bool theta_hydrostatic_mode = m_theta_hydrostatic_mode;
-
-  Kokkos::parallel_for(
-    "caar compute_scan_quantities grad",
-    SphereBlockOps::policy(m_num_elems, 1),
-    KOKKOS_LAMBDA(const Team &team) {
-
-      SphereBlockOps b(sg, team);
-      if (b.skip()) return;
-
-      const Real pi = 0.5 * (buffers_dp_i(b.e,b.x,b.y,b.z) + buffers_dp_i(b.e,b.x,b.y,b.z+1));
-      const SphereBlockScratch tmp0(b, pi);
-
-      if (theta_hydrostatic_mode) {
-
-        Real exner = pi;
-        EquationOfState::pressure_to_exner(exner);
-        buffers_exner(b.e,b.x,b.y,b.z) = exner;
-        buffers_pnh(b.e,b.x,b.y,b.z) = EquationOfState::compute_dphi(state_vtheta_dp(b.e,data_n0,b.x,b.y,b.z), exner, pi);
-
-      }
-      b.barrier();
-
-      Real grad0, grad1;
-      b.grad(grad0, grad1, tmp0);
-
-      Real omega = -0.5 * (buffers_omega_i(b.e,b.x,b.y,b.z) + buffers_omega_i(b.e,b.x,b.y,b.z+1));
-      omega += state_v(b.e,data_n0,0,b.x,b.y,b.z) * grad0 + state_v(b.e,data_n0,1,b.x,b.y,b.z) * grad1;
-      buffers_omega_p(b.e,b.x,b.y,b.z) = omega;
-
-      // compute_accumulated_quantities
-      derived_omega_p(b.e,b.x,b.y,b.z) += data_eta_ave_w * omega;
-    });
 
   if (theta_hydrostatic_mode) {
 

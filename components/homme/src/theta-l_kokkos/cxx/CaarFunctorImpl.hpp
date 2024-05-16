@@ -126,6 +126,7 @@ struct CaarFunctorImpl {
   private:
   template <bool HYDROSTATIC> void first();
   void scans();
+  template <bool HYDROSTATIC> void after_scans();
   template <bool HYDROSTATIC> void last();
   void caar_compute();
 
