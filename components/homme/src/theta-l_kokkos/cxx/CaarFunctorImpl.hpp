@@ -125,7 +125,7 @@ struct CaarFunctorImpl {
 
   private:
   template <bool HYDROSTATIC> void blockOps1();
-  void scanOps1();
+  template <bool RSPLIT_ZERO> void scanOps1();
   template <bool HYDROSTATIC> void blockOps2();
   void scanOps2();
   template <bool HYDROSTATIC> void colN();

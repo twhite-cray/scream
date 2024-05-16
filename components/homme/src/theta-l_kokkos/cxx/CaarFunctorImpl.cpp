@@ -61,13 +61,16 @@ void CaarFunctorImpl::blockOps1()
     });
 }
 
+template <bool RSPLIT_ZERO>
 void CaarFunctorImpl::scanOps1()
 {
   auto buffers_div_vdp = viewAsReal(m_buffers.div_vdp);
   auto buffers_dp_i = viewAsReal(m_buffers.dp_i);
+  auto buffers_eta_dot_dpdn = viewAsReal(m_buffers.eta_dot_dpdn);
   auto buffers_w_tens = viewAsReal(m_buffers.w_tens);
 
   const int data_n0 = m_data.n0;
+  auto &hvcoord_hybrid_bi = m_hvcoord.hybrid_bi;
   const Real pi_i00 = m_hvcoord.ps0 * m_hvcoord.hybrid_ai0;
   auto state_dp3d = viewAsReal(m_state.m_dp3d);
 
@@ -75,9 +78,32 @@ void CaarFunctorImpl::scanOps1()
     "caar_compute scanOps1",
     SphereScanOps::policy(m_num_elems),
     KOKKOS_LAMBDA(const Team &team) {
+
       const SphereScanOps s(team);
+
       s.scan(buffers_dp_i, state_dp3d, data_n0, pi_i00);
       s.scan(buffers_w_tens, buffers_div_vdp, 0);
+
+      if (RSPLIT_ZERO) {
+
+        s.scan(buffers_eta_dot_dpdn, buffers_div_vdp, 0);
+
+        const Real last = buffers_eta_dot_dpdn(s.e,s.x,s.y,NUM_PHYSICAL_LEV);
+
+        Kokkos::parallel_for(
+          Kokkos::ThreadVectorRange(s.t, 1, NUM_PHYSICAL_LEV),
+          [&](const int z) {
+            Real eta_dot_dpdn = -buffers_eta_dot_dpdn(s.e,s.x,s.y,z);
+            eta_dot_dpdn += hvcoord_hybrid_bi(z) * last;
+            buffers_eta_dot_dpdn(s.e,s.x,s.y,z) = eta_dot_dpdn;
+          });
+
+        Kokkos::single(
+          Kokkos::PerThread(team),
+          [&]() {
+            buffers_eta_dot_dpdn(s.e,s.x,s.y,0) = buffers_eta_dot_dpdn(s.e,s.x,s.y,NUM_PHYSICAL_LEV) = 0;
+          });
+      }
     });
 }
 
@@ -255,7 +281,8 @@ void CaarFunctorImpl::caar_compute()
   if (m_theta_hydrostatic_mode) blockOps1<true>();
   else blockOps1<false>();
 
-  scanOps1();
+  if (m_rsplit == 0) scanOps1<true>();
+  else scanOps1<false>();
 
   if (m_theta_hydrostatic_mode) blockOps2<true>();
   else blockOps2<false>();
@@ -351,33 +378,6 @@ void CaarFunctorImpl::caar_compute()
   if (rsplit == 0) {
 
     auto buffers_eta_dot_dpdn = viewAsReal(m_buffers.eta_dot_dpdn);
-    auto &hvcoord_hybrid_bi = m_hvcoord.hybrid_bi;
-
-    Kokkos::parallel_for(
-      "caar compute_eta_dot_dpn",
-      SphereScanOps::policy(m_num_elems),
-      KOKKOS_LAMBDA(const Team &team) {
-
-        const SphereScanOps s(team);
-        s.scan(buffers_eta_dot_dpdn, buffers_div_vdp, 0);
-
-        const Real last = buffers_eta_dot_dpdn(s.e,s.x,s.y,NUM_PHYSICAL_LEV);
-
-        Kokkos::parallel_for(
-          Kokkos::ThreadVectorRange(s.t, 1, NUM_PHYSICAL_LEV),
-          [&](const int z) {
-            Real eta_dot_dpdn = -buffers_eta_dot_dpdn(s.e,s.x,s.y,z);
-            eta_dot_dpdn += hvcoord_hybrid_bi(z) * last;
-            buffers_eta_dot_dpdn(s.e,s.x,s.y,z) = eta_dot_dpdn;
-          });
-
-        Kokkos::single(
-          Kokkos::PerThread(team),
-          [&]() {
-            buffers_eta_dot_dpdn(s.e,s.x,s.y,0) = buffers_eta_dot_dpdn(s.e,s.x,s.y,NUM_PHYSICAL_LEV) = 0;
-          });
-      });
-
     auto derived_eta_dot_dpdn = viewAsReal(m_derived.m_eta_dot_dpdn);
 
     Kokkos::parallel_for(
