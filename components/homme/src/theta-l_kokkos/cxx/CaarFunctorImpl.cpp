@@ -107,22 +107,27 @@ void CaarFunctorImpl::scanOps1()
     });
 }
 
-template <bool HYDROSTATIC>
+template <bool HYDROSTATIC, bool RSPLIT_ZERO>
 void CaarFunctorImpl::blockOps2()
 {
   auto buffers_dp_i = viewAsReal(m_buffers.dp_i);
+  auto buffers_dp_tens = viewAsReal(m_buffers.dp_tens);
+  auto buffers_eta_dot_dpdn = viewAsReal(m_buffers.eta_dot_dpdn);
   auto buffers_exner = viewAsReal(m_buffers.exner);
   auto buffers_omega_p = viewAsReal(m_buffers.omega_p);
   auto buffers_pnh = viewAsReal(m_buffers.pnh);
+  auto buffers_v_tens = viewAsReal(m_buffers.v_tens);
   auto buffers_w_tens = viewAsReal(m_buffers.w_tens);
 
   const Real data_eta_ave_w = m_data.eta_ave_w;
   const int data_n0 = m_data.n0;
 
+  auto derived_eta_dot_dpdn = viewAsReal(m_derived.m_eta_dot_dpdn);
   auto derived_omega_p = viewAsReal(m_derived.m_omega_p);
 
   const SphereGlobal sg(m_sphere_ops);
 
+  auto state_dp3d = viewAsReal(m_state.m_dp3d);
   auto state_v = viewAsReal(m_state.m_v);
   auto state_vtheta_dp= viewAsReal(m_state.m_vtheta_dp);
 
@@ -150,10 +155,38 @@ void CaarFunctorImpl::blockOps2()
       b.grad(grad0, grad1, tmp0);
 
       Real omega = -0.5 * (buffers_w_tens(b.e,b.x,b.y,b.z) + buffers_w_tens(b.e,b.x,b.y,b.z+1));
-      omega += state_v(b.e,data_n0,0,b.x,b.y,b.z) * grad0 + state_v(b.e,data_n0,1,b.x,b.y,b.z) * grad1;
+      const Real uz = state_v(b.e,data_n0,0,b.x,b.y,b.z);
+      const Real vz = state_v(b.e,data_n0,1,b.x,b.y,b.z);
+      omega += uz * grad0 + vz * grad1;
       buffers_omega_p(b.e,b.x,b.y,b.z) = omega;
 
       derived_omega_p(b.e,b.x,b.y,b.z) += data_eta_ave_w * omega;
+
+      if (RSPLIT_ZERO) {
+
+        const Real dp = state_dp3d(b.e,data_n0,b.x,b.y,b.z);
+        const Real etap = buffers_eta_dot_dpdn(b.e,b.x,b.y,b.z+1);
+        const Real etaz = buffers_eta_dot_dpdn(b.e,b.x,b.y,b.z);
+
+        buffers_dp_tens(b.e,b.x,b.y,b.z) += etap - etaz;
+
+        derived_eta_dot_dpdn(b.e,b.x,b.y,b.z) += data_eta_ave_w * etaz;
+
+        Real u = 0;
+        Real v = 0;
+        if (b.z < NUM_PHYSICAL_LEV-1) {
+          const Real facp = 0.5 * etap / dp;
+          u = facp * (state_v(b.e,data_n0,0,b.x,b.y,b.z+1) - uz);
+          v = facp * (state_v(b.e,data_n0,1,b.x,b.y,b.z+1) - vz);
+        }
+        if (b.z > 0) {
+          const Real facm = 0.5 * etaz / dp;
+          u += facm * (uz - state_v(b.e,data_n0,0,b.x,b.y,b.z-1));
+          v += facm * (vz - state_v(b.e,data_n0,1,b.x,b.y,b.z-1));
+        }
+        buffers_v_tens(b.e,0,b.x,b.y,b.z) = u;
+        buffers_v_tens(b.e,1,b.x,b.y,b.z) = v;
+      }
     });
 }
 
@@ -348,8 +381,13 @@ void CaarFunctorImpl::caar_compute()
   if (m_rsplit == 0) scanOps1<true>();
   else scanOps1<false>();
 
-  if (m_theta_hydrostatic_mode) blockOps2<true>();
-  else blockOps2<false>();
+  if (m_theta_hydrostatic_mode) {
+    if (m_rsplit == 0) blockOps2<true,true>();
+    else blockOps2<true,false>();
+  } else {
+    if (m_rsplit == 0) blockOps2<false,true>();
+    else blockOps2<false,false>();
+  }
 
   if (m_theta_hydrostatic_mode) scanOps2();
 
@@ -412,16 +450,16 @@ void CaarFunctorImpl::caar_compute()
       SphereCol::policy(m_num_elems, NUM_PHYSICAL_LEV),
       KOKKOS_LAMBDA(const Team &team) {
         const SphereCol c(team);
-
+#if 0
         // compute_v_vadv
 
         const Real uz = state_v(c.e,data_n0,0,c.x,c.y,c.z);
         const Real vz = state_v(c.e,data_n0,1,c.x,c.y,c.z);
         const Real dp = state_dp3d(c.e,data_n0,c.x,c.y,c.z);
-
+#endif
         const Real etap = buffers_eta_dot_dpdn(c.e,c.x,c.y,c.z+1);
         const Real etaz = buffers_eta_dot_dpdn(c.e,c.x,c.y,c.z);
-
+#if 0
         // compute_dp_and_theta_tens
         buffers_dp_tens(c.e,c.x,c.y,c.z) += etap - etaz;
 
@@ -442,7 +480,7 @@ void CaarFunctorImpl::caar_compute()
         }
         buffers_v_tens(c.e,0,c.x,c.y,c.z) = u;
         buffers_v_tens(c.e,1,c.x,c.y,c.z) = v;
-
+#endif
         // compute_vtheta_vadv
 
         const Real thetap = etap * buffers_vtheta_i(c.e,c.x,c.y,c.z+1);
