@@ -116,6 +116,7 @@ void CaarFunctorImpl::epoch3_blockOps()
   auto buffers_exner = viewAsReal(m_buffers.exner);
   auto buffers_omega_p = viewAsReal(m_buffers.omega_p);
   auto buffers_pnh = viewAsReal(m_buffers.pnh);
+  auto buffers_temp = viewAsReal(m_buffers.temp);
   auto buffers_v_tens = viewAsReal(m_buffers.v_tens);
   auto buffers_w_tens = viewAsReal(m_buffers.w_tens);
 
@@ -130,6 +131,7 @@ void CaarFunctorImpl::epoch3_blockOps()
   auto state_dp3d = viewAsReal(m_state.m_dp3d);
   auto state_v = viewAsReal(m_state.m_v);
   auto state_vtheta_dp= viewAsReal(m_state.m_vtheta_dp);
+  auto state_w_i = viewAsReal(m_state.m_w_i);
 
   Kokkos::parallel_for(
     "caar_compute epoch3_blockOps",
@@ -171,6 +173,12 @@ void CaarFunctorImpl::epoch3_blockOps()
         buffers_dp_tens(b.e,b.x,b.y,b.z) += etap - etaz;
 
         derived_eta_dot_dpdn(b.e,b.x,b.y,b.z) += data_eta_ave_w * etaz;
+
+        if (!HYDROSTATIC) {
+          const Real dw = state_w_i(b.e,data_n0,b.x,b.y,b.z+1) - state_w_i(b.e,data_n0,b.x,b.y,b.z);
+          const Real eta = 0.5 * (etaz + etap);
+          buffers_temp(b.e,b.x,b.y,b.z) = dw * eta;
+        }
 
         Real u = 0;
         Real v = 0;
@@ -471,17 +479,6 @@ void CaarFunctorImpl::caar_compute()
     if (!theta_hydrostatic_mode) {
 
       auto buffers_temp = viewAsReal(m_buffers.temp);
-
-      Kokkos::parallel_for(
-        "caar compute_w_vadv num_physical_lev",
-        SphereCol::policy(m_num_elems, NUM_PHYSICAL_LEV),
-        KOKKOS_LAMBDA(const Team &team) {
-          const SphereCol c(team);
-
-          const Real dw = state_w_i(c.e,data_n0,c.x,c.y,c.z+1) - state_w_i(c.e,data_n0,c.x,c.y,c.z);
-          const Real eta = 0.5 * (buffers_eta_dot_dpdn(c.e,c.x,c.y,c.z) + buffers_eta_dot_dpdn(c.e,c.x,c.y,c.z+1));
-          buffers_temp(c.e,c.x,c.y,c.z) = dw * eta;
-        });
 
       auto buffers_phi_tens = viewAsReal(m_buffers.phi_tens);
 
