@@ -3,7 +3,7 @@
 namespace Homme {
 
 template <bool HYDROSTATIC>
-void CaarFunctorImpl::blockOps1()
+void CaarFunctorImpl::epoch1_blockOps()
 {
   auto buffers_dp_tens = viewAsReal(m_buffers.dp_tens);
   auto buffers_div_vdp = viewAsReal(m_buffers.div_vdp);
@@ -25,7 +25,7 @@ void CaarFunctorImpl::blockOps1()
   auto state_vtheta_dp= viewAsReal(m_state.m_vtheta_dp);
 
   Kokkos::parallel_for(
-    "caar_compute blockOps1",
+    "caar_compute epoch1_blockOps",
     SphereBlockOps::policy(m_num_elems, 2),
     KOKKOS_LAMBDA(const Team &team) {
 
@@ -62,7 +62,7 @@ void CaarFunctorImpl::blockOps1()
 }
 
 template <bool RSPLIT_ZERO>
-void CaarFunctorImpl::scanOps1()
+void CaarFunctorImpl::epoch2_scanOps()
 {
   auto buffers_div_vdp = viewAsReal(m_buffers.div_vdp);
   auto buffers_dp_i = viewAsReal(m_buffers.dp_i);
@@ -75,7 +75,7 @@ void CaarFunctorImpl::scanOps1()
   auto state_dp3d = viewAsReal(m_state.m_dp3d);
 
   Kokkos::parallel_for(
-    "caar_compute scanOps1",
+    "caar_compute epoch2_scanOps",
     SphereScanOps::policy(m_num_elems),
     KOKKOS_LAMBDA(const Team &team) {
 
@@ -108,7 +108,7 @@ void CaarFunctorImpl::scanOps1()
 }
 
 template <bool HYDROSTATIC, bool RSPLIT_ZERO>
-void CaarFunctorImpl::blockOps2()
+void CaarFunctorImpl::epoch3_blockOps()
 {
   auto buffers_dp_i = viewAsReal(m_buffers.dp_i);
   auto buffers_dp_tens = viewAsReal(m_buffers.dp_tens);
@@ -132,7 +132,7 @@ void CaarFunctorImpl::blockOps2()
   auto state_vtheta_dp= viewAsReal(m_state.m_vtheta_dp);
 
   Kokkos::parallel_for(
-    "caar_compute blockOps2",
+    "caar_compute epoch3_blockOps",
     SphereBlockOps::policy(m_num_elems, 1),
     KOKKOS_LAMBDA(const Team &team) {
 
@@ -190,7 +190,7 @@ void CaarFunctorImpl::blockOps2()
     });
 }
 
-void CaarFunctorImpl::scanOps2()
+void CaarFunctorImpl::epoch4_scanOps()
 {
   auto buffers_phi = viewAsReal(m_buffers.phi);
   auto buffers_pnh = viewAsReal(m_buffers.pnh);
@@ -202,7 +202,7 @@ void CaarFunctorImpl::scanOps2()
   auto state_phinh_i = viewAsReal(m_state.m_phinh_i);
 
   Kokkos::parallel_for(
-    "caar_compute scanOps2",
+    "caar_compute epoch4_scanOps",
     SphereScanOps::policy(m_num_elems),
     KOKKOS_LAMBDA(const Team &team) {
       const SphereScanOps s(team);
@@ -216,7 +216,7 @@ void CaarFunctorImpl::scanOps2()
 }
 
 template <bool HYDROSTATIC, bool RSPLIT_ZERO>
-void CaarFunctorImpl::colOps1()
+void CaarFunctorImpl::epoch5_colOps()
 {
   auto buffers_dp_i = viewAsReal(m_buffers.dp_i);
   auto buffers_dpnh_dp_i = viewAsReal(m_buffers.dpnh_dp_i);
@@ -236,7 +236,7 @@ void CaarFunctorImpl::colOps1()
   auto state_v = viewAsReal(m_state.m_v);
 
   Kokkos::parallel_for(
-    "caar_compute colOps1",
+    "caar_compute epoch5_colOps",
     SphereColOps::policy(m_num_elems, NUM_INTERFACE_LEV),
     KOKKOS_LAMBDA(const Team &team) {
 
@@ -279,8 +279,29 @@ void CaarFunctorImpl::colOps1()
     });
 }
 
+void CaarFunctorImpl::epoch6_col()
+{
+  auto buffers_eta_dot_dpdn = viewAsReal(m_buffers.eta_dot_dpdn);
+  auto buffers_theta_tens = viewAsReal(m_buffers.theta_tens);
+  auto buffers_vtheta_i = viewAsReal(m_buffers.vtheta_i);
+
+  Kokkos::parallel_for(
+    "caar_compute epoch6_col",
+    SphereCol::policy(m_num_elems, NUM_PHYSICAL_LEV),
+    KOKKOS_LAMBDA(const Team &team) {
+
+      const SphereCol c(team);
+
+      const Real etap = buffers_eta_dot_dpdn(c.e,c.x,c.y,c.z+1);
+      const Real etaz = buffers_eta_dot_dpdn(c.e,c.x,c.y,c.z);
+      const Real thetap = etap * buffers_vtheta_i(c.e,c.x,c.y,c.z+1);
+      const Real thetaz = etaz * buffers_vtheta_i(c.e,c.x,c.y,c.z);
+      buffers_theta_tens(c.e,c.x,c.y,c.z) = thetap - thetaz;
+    });
+}
+
 template <bool HYDROSTATIC>
-void CaarFunctorImpl::colN()
+void CaarFunctorImpl::epochZ_col()
 {
   auto buffers_dp_tens = viewAsReal(m_buffers.dp_tens);
   auto buffers_phi_tens = viewAsReal(m_buffers.phi_tens);
@@ -304,7 +325,7 @@ void CaarFunctorImpl::colN()
   auto state_w_i = viewAsReal(m_state.m_w_i);
 
   Kokkos::parallel_for(
-    "caar_compute colN",
+    "caar_compute epochZ_col",
     SphereCol::policy(m_num_elems, NUM_PHYSICAL_LEV),
     KOKKOS_LAMBDA(const Team &team) {
 
@@ -375,29 +396,31 @@ void CaarFunctorImpl::colN()
 void CaarFunctorImpl::caar_compute() 
 {
 
-  if (m_theta_hydrostatic_mode) blockOps1<true>();
-  else blockOps1<false>();
+  if (m_theta_hydrostatic_mode) epoch1_blockOps<true>();
+  else epoch1_blockOps<false>();
 
-  if (m_rsplit == 0) scanOps1<true>();
-  else scanOps1<false>();
-
-  if (m_theta_hydrostatic_mode) {
-    if (m_rsplit == 0) blockOps2<true,true>();
-    else blockOps2<true,false>();
-  } else {
-    if (m_rsplit == 0) blockOps2<false,true>();
-    else blockOps2<false,false>();
-  }
-
-  if (m_theta_hydrostatic_mode) scanOps2();
+  if (m_rsplit == 0) epoch2_scanOps<true>();
+  else epoch2_scanOps<false>();
 
   if (m_theta_hydrostatic_mode) {
-    if (m_rsplit == 0) colOps1<true,true>();
-    else colOps1<true,false>();
+    if (m_rsplit == 0) epoch3_blockOps<true,true>();
+    else epoch3_blockOps<true,false>();
   } else {
-    if (m_rsplit == 0) colOps1<false,true>();
-    else colOps1<false,false>();
+    if (m_rsplit == 0) epoch3_blockOps<false,true>();
+    else epoch3_blockOps<false,false>();
   }
+
+  if (m_theta_hydrostatic_mode) epoch4_scanOps();
+
+  if (m_theta_hydrostatic_mode) {
+    if (m_rsplit == 0) epoch5_colOps<true,true>();
+    else epoch5_colOps<true,false>();
+  } else {
+    if (m_rsplit == 0) epoch5_colOps<false,true>();
+    else epoch5_colOps<false,false>();
+  }
+
+  if (m_rsplit == 0) epoch6_col();
 
   const SphereGlobal sg(m_sphere_ops);
 
@@ -444,50 +467,6 @@ void CaarFunctorImpl::caar_compute()
 
     auto buffers_eta_dot_dpdn = viewAsReal(m_buffers.eta_dot_dpdn);
     auto derived_eta_dot_dpdn = viewAsReal(m_derived.m_eta_dot_dpdn);
-
-    Kokkos::parallel_for(
-      "caar compute_v_vadv compute_vtheta_vadv",
-      SphereCol::policy(m_num_elems, NUM_PHYSICAL_LEV),
-      KOKKOS_LAMBDA(const Team &team) {
-        const SphereCol c(team);
-#if 0
-        // compute_v_vadv
-
-        const Real uz = state_v(c.e,data_n0,0,c.x,c.y,c.z);
-        const Real vz = state_v(c.e,data_n0,1,c.x,c.y,c.z);
-        const Real dp = state_dp3d(c.e,data_n0,c.x,c.y,c.z);
-#endif
-        const Real etap = buffers_eta_dot_dpdn(c.e,c.x,c.y,c.z+1);
-        const Real etaz = buffers_eta_dot_dpdn(c.e,c.x,c.y,c.z);
-#if 0
-        // compute_dp_and_theta_tens
-        buffers_dp_tens(c.e,c.x,c.y,c.z) += etap - etaz;
-
-        // compute_accumulated_quantities
-        derived_eta_dot_dpdn(c.e,c.x,c.y,c.z) += data_eta_ave_w * etaz;
-
-        Real u = 0;
-        Real v = 0;
-        if (c.z < NUM_PHYSICAL_LEV-1) {
-          const Real facp = 0.5 * etap / dp;
-          u = facp * (state_v(c.e,data_n0,0,c.x,c.y,c.z+1) - uz);
-          v = facp * (state_v(c.e,data_n0,1,c.x,c.y,c.z+1) - vz);
-        }
-        if (c.z > 0) {
-          const Real facm = 0.5 * etaz / dp;
-          u += facm * (uz - state_v(c.e,data_n0,0,c.x,c.y,c.z-1));
-          v += facm * (vz - state_v(c.e,data_n0,1,c.x,c.y,c.z-1));
-        }
-        buffers_v_tens(c.e,0,c.x,c.y,c.z) = u;
-        buffers_v_tens(c.e,1,c.x,c.y,c.z) = v;
-#endif
-        // compute_vtheta_vadv
-
-        const Real thetap = etap * buffers_vtheta_i(c.e,c.x,c.y,c.z+1);
-        const Real thetaz = etaz * buffers_vtheta_i(c.e,c.x,c.y,c.z);
-        buffers_theta_tens(c.e,c.x,c.y,c.z) = thetap - thetaz;
-      });
-
 
     if (!theta_hydrostatic_mode) {
 
@@ -724,8 +703,8 @@ void CaarFunctorImpl::caar_compute()
       buffers_v_tens(b.e,1,b.x,b.y,b.z) = v_tens;
     });
 
-  if (m_theta_hydrostatic_mode) colN<true>();
-  else colN<false>();
+  if (m_theta_hydrostatic_mode) epochZ_col<true>();
+  else epochZ_col<false>();
 }
 
 }
