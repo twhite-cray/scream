@@ -182,6 +182,70 @@ void CaarFunctorImpl::scanOps2()
     });
 }
 
+template <bool HYDROSTATIC, bool RSPLIT_ZERO>
+void CaarFunctorImpl::colOps1()
+{
+  auto buffers_dp_i = viewAsReal(m_buffers.dp_i);
+  auto buffers_dpnh_dp_i = viewAsReal(m_buffers.dpnh_dp_i);
+  auto buffers_exner = viewAsReal(m_buffers.exner);
+  auto buffers_phi = viewAsReal(m_buffers.phi);
+  auto buffers_pnh = viewAsReal(m_buffers.pnh);
+  auto buffers_v_i = viewAsReal(m_buffers.v_i);
+  auto buffers_vtheta_i = viewAsReal(m_buffers.vtheta_i);
+
+  const int data_n0 = m_data.n0;
+
+  const Real pi_i00 = m_hvcoord.ps0 * m_hvcoord.hybrid_ai0;
+
+  const SphereGlobal sg(m_sphere_ops);
+
+  auto state_dp3d = viewAsReal(m_state.m_dp3d);
+  auto state_v = viewAsReal(m_state.m_v);
+
+  Kokkos::parallel_for(
+    "caar_compute colOps1",
+    SphereColOps::policy(m_num_elems, NUM_INTERFACE_LEV),
+    KOKKOS_LAMBDA(const Team &team) {
+
+      const SphereColOps c(sg, team);
+
+      const Real dm = (c.z == 0) ? 0 : state_dp3d(c.e,data_n0,c.x,c.y,c.z-1);
+      const Real dz = (c.z == NUM_PHYSICAL_LEV) ? 0 : state_dp3d(c.e,data_n0,c.x,c.y,c.z);
+      const Real dp_i = (c.z == 0) ? dz : (c.z == NUM_PHYSICAL_LEV) ? dm : 0.5 * (dz + dm);
+      buffers_dp_i(c.e,c.x,c.y,c.z) = dp_i;
+
+      if (!HYDROSTATIC) {
+
+        const Real v0m = (c.z == 0) ? 0 : state_v(c.e,data_n0,0,c.x,c.y,c.z-1);
+        const Real v0z = (c.z == NUM_PHYSICAL_LEV) ? 0 : state_v(c.e,data_n0,0,c.x,c.y,c.z);
+        const Real v_i0 = (c.z == 0) ? v0z : (c.z == NUM_PHYSICAL_LEV) ? v0m : (dz * v0z + dm * v0m) / (dm + dz);
+        buffers_v_i(c.e,0,c.x,c.y,c.z) = v_i0;
+
+        const Real v1m = (c.z == 0) ? 0 : state_v(c.e,data_n0,1,c.x,c.y,c.z-1);
+        const Real v1z = (c.z == NUM_PHYSICAL_LEV) ? 0 : state_v(c.e,data_n0,1,c.x,c.y,c.z);
+        const Real v_i1 = (c.z == 0) ? v1z : (c.z == NUM_PHYSICAL_LEV) ? v1m :(dz * v1z + dm * v1m) / (dm + dz);
+        buffers_v_i(c.e,1,c.x,c.y,c.z) = v_i1;
+
+        const Real pm = (c.z == 0) ? pi_i00 : buffers_pnh(c.e,c.x,c.y,c.z-1);
+        const Real pz = (c.z == NUM_PHYSICAL_LEV) ? pm + 0.5 * dm : buffers_pnh(c.e,c.x,c.y,c.z);
+        buffers_dpnh_dp_i(c.e,c.x,c.y,c.z) = 2.0 * (pz - pm) / (dm + dz);
+      }
+
+      if (RSPLIT_ZERO) {
+
+        Real vtheta_i = 0;
+        if ((c.z > 0) && (c.z < NUM_PHYSICAL_LEV)) {
+          const Real dphi = buffers_phi(c.e,c.x,c.y,c.z) - buffers_phi(c.e,c.x,c.y,c.z-1);
+          const Real dexner = buffers_exner(c.e,c.x,c.y,c.z) - buffers_exner(c.e,c.x,c.y,c.z-1);
+          vtheta_i = dphi / dexner;
+        }
+        vtheta_i /= -PhysicalConstants::cp;
+        if (!HYDROSTATIC) vtheta_i *= buffers_dpnh_dp_i(c.e,c.x,c.y,c.z);
+        buffers_vtheta_i(c.e,c.x,c.y,c.z) = vtheta_i;
+      }
+    });
+}
+
 template <bool HYDROSTATIC>
 void CaarFunctorImpl::colN()
 {
@@ -289,6 +353,14 @@ void CaarFunctorImpl::caar_compute()
 
   if (m_theta_hydrostatic_mode) scanOps2();
 
+  if (m_theta_hydrostatic_mode) {
+    if (m_rsplit == 0) colOps1<true,true>();
+    else colOps1<true,false>();
+  } else {
+    if (m_rsplit == 0) colOps1<false,true>();
+    else colOps1<false,false>();
+  }
+
   const SphereGlobal sg(m_sphere_ops);
 
   auto buffers_dp_tens = viewAsReal(m_buffers.dp_tens);
@@ -324,51 +396,6 @@ void CaarFunctorImpl::caar_compute()
 
   const int rsplit = m_rsplit;
 
-  if ((rsplit == 0) || !theta_hydrostatic_mode) {
-
-    Kokkos::parallel_for(
-      "caar compute_interface_quantities",
-      SphereColOps::policy(m_num_elems, NUM_INTERFACE_LEV),
-      KOKKOS_LAMBDA(const Team &team) {
-
-        const SphereColOps c(sg, team);
-
-        const Real dm = (c.z == 0) ? 0 : state_dp3d(c.e,data_n0,c.x,c.y,c.z-1);
-        const Real dz = (c.z == NUM_PHYSICAL_LEV) ? 0 : state_dp3d(c.e,data_n0,c.x,c.y,c.z);
-        const Real dp_i = (c.z == 0) ? dz : (c.z == NUM_PHYSICAL_LEV) ? dm : 0.5 * (dz + dm);
-        buffers_dp_i(c.e,c.x,c.y,c.z) = dp_i;
-
-        if (!theta_hydrostatic_mode) {
-
-          const Real v0m = (c.z == 0) ? 0 : state_v(c.e,data_n0,0,c.x,c.y,c.z-1);
-          const Real v0z = (c.z == NUM_PHYSICAL_LEV) ? 0 : state_v(c.e,data_n0,0,c.x,c.y,c.z);
-          const Real v_i0 = (c.z == 0) ? v0z : (c.z == NUM_PHYSICAL_LEV) ? v0m : (dz * v0z + dm * v0m) / (dm + dz);
-          buffers_v_i(c.e,0,c.x,c.y,c.z) = v_i0;
-
-          const Real v1m = (c.z == 0) ? 0 : state_v(c.e,data_n0,1,c.x,c.y,c.z-1);
-          const Real v1z = (c.z == NUM_PHYSICAL_LEV) ? 0 : state_v(c.e,data_n0,1,c.x,c.y,c.z);
-          const Real v_i1 = (c.z == 0) ? v1z : (c.z == NUM_PHYSICAL_LEV) ? v1m :(dz * v1z + dm * v1m) / (dm + dz);
-          buffers_v_i(c.e,1,c.x,c.y,c.z) = v_i1;
-
-          const Real pm = (c.z == 0) ? pi_i00 : buffers_pnh(c.e,c.x,c.y,c.z-1);
-          const Real pz = (c.z == NUM_PHYSICAL_LEV) ? pm + 0.5 * dm : buffers_pnh(c.e,c.x,c.y,c.z);
-          buffers_dpnh_dp_i(c.e,c.x,c.y,c.z) = 2.0 * (pz - pm) / (dm + dz);
-        }
-
-        if (rsplit == 0) {
-
-          Real vtheta_i = 0;
-          if ((c.z > 0) && (c.z < NUM_PHYSICAL_LEV)) {
-            const Real dphi = buffers_phi(c.e,c.x,c.y,c.z) - buffers_phi(c.e,c.x,c.y,c.z-1);
-            const Real dexner = buffers_exner(c.e,c.x,c.y,c.z) - buffers_exner(c.e,c.x,c.y,c.z-1);
-            vtheta_i = dphi / dexner;
-          }
-          vtheta_i /= -PhysicalConstants::cp;
-          if (!theta_hydrostatic_mode) vtheta_i *= buffers_dpnh_dp_i(c.e,c.x,c.y,c.z);
-          buffers_vtheta_i(c.e,c.x,c.y,c.z) = vtheta_i;
-        }
-      });
-  }
 
   auto buffers_theta_tens = viewAsReal(m_buffers.theta_tens);
   auto buffers_v_tens = viewAsReal(m_buffers.v_tens);

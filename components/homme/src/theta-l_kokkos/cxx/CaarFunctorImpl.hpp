@@ -128,6 +128,7 @@ struct CaarFunctorImpl {
   template <bool RSPLIT_ZERO> void scanOps1();
   template <bool HYDROSTATIC> void blockOps2();
   void scanOps2();
+  template <bool HYDROSTATIC, bool RSPLIT_ZERO> void colOps1();
   template <bool HYDROSTATIC> void colN();
   void caar_compute();
 
