@@ -230,6 +230,8 @@ void CaarFunctorImpl::epoch5_colOps()
   auto buffers_dpnh_dp_i = viewAsReal(m_buffers.dpnh_dp_i);
   auto buffers_eta_dot_dpdn = viewAsReal(m_buffers.eta_dot_dpdn);
   auto buffers_exner = viewAsReal(m_buffers.exner);
+  auto buffers_grad_phinh_i = viewAsReal(m_buffers.grad_phinh_i);
+  auto buffers_grad_w_i = viewAsReal(m_buffers.grad_w_i);
   auto buffers_phi = viewAsReal(m_buffers.phi);
   auto buffers_phi_tens = viewAsReal(m_buffers.phi_tens);
   auto buffers_pnh = viewAsReal(m_buffers.pnh);
@@ -239,13 +241,24 @@ void CaarFunctorImpl::epoch5_colOps()
   auto buffers_w_tens = viewAsReal(m_buffers.w_tens);
 
   const int data_n0 = m_data.n0;
+  const Real dscale = m_data.scale1 - m_data.scale2;
 
+  auto &geometry_gradphis = m_geometry.m_gradphis;
+
+  const Real gscale1 = m_data.scale1 * PhysicalConstants::g;
+  const Real gscale2 = m_data.scale2 * PhysicalConstants::g;
+
+  auto hvcoord_hybrid_bi_packed = viewAsReal(m_hvcoord.hybrid_bi_packed);
+
+  const Real ndata_scale1 = -m_data.scale1;
   const Real pi_i00 = m_hvcoord.ps0 * m_hvcoord.hybrid_ai0;
 
   const SphereGlobal sg(m_sphere_ops);
 
   auto state_dp3d = viewAsReal(m_state.m_dp3d);
+  auto state_phinh_i = viewAsReal(m_state.m_phinh_i);
   auto state_v = viewAsReal(m_state.m_v);
+  auto state_w_i = viewAsReal(m_state.m_w_i);
 
   Kokkos::parallel_for(
     "caar_compute epoch5_colOps",
@@ -253,6 +266,9 @@ void CaarFunctorImpl::epoch5_colOps()
     KOKKOS_LAMBDA(const Team &team) {
 
       const SphereColOps c(sg, team);
+
+      c.grad(buffers_grad_phinh_i, state_phinh_i, data_n0);
+      if (!HYDROSTATIC) c.grad(buffers_grad_w_i, state_w_i, data_n0); 
 
       const Real dm = (c.z == 0) ? 0 : state_dp3d(c.e,data_n0,c.x,c.y,c.z-1);
       const Real dz = (c.z == NUM_PHYSICAL_LEV) ? 0 : state_dp3d(c.e,data_n0,c.x,c.y,c.z);
@@ -294,13 +310,31 @@ void CaarFunctorImpl::epoch5_colOps()
         vtheta_i /= -PhysicalConstants::cp;
         if (!HYDROSTATIC) vtheta_i *= buffers_dpnh_dp_i(c.e,c.x,c.y,c.z);
         buffers_vtheta_i(c.e,c.x,c.y,c.z) = vtheta_i;
+      }
 
-        if (!HYDROSTATIC) {
+      if (!HYDROSTATIC) {
+
+        Real w_tens = 0;
+        if (RSPLIT_ZERO) {
           const Real tempm = (c.z == 0) ? 0 : buffers_temp(c.e,c.x,c.y,c.z-1);
           const Real tempz = (c.z == NUM_PHYSICAL_LEV) ? 0 : buffers_temp(c.e,c.x,c.y,c.z);
           const Real dw = (c.z == 0) ? tempz : (c.z == NUM_PHYSICAL_LEV) ? tempm : 0.5 * (tempz + tempm);
-          buffers_w_tens(c.e,c.x,c.y,c.z) = dw / dp_i;
+          w_tens = dw / dp_i;
         }
+        w_tens += buffers_v_i(c.e,0,c.x,c.y,c.z) * buffers_grad_w_i(c.e,0,c.x,c.y,c.z) + buffers_v_i(c.e,1,c.x,c.y,c.z) * buffers_grad_w_i(c.e,1,c.x,c.y,c.z);
+        w_tens *= ndata_scale1;
+        const Real gscale = (c.z == NUM_PHYSICAL_LEV) ? gscale1 : gscale2;
+        w_tens += (buffers_dpnh_dp_i(c.e,c.x,c.y,c.z)-Real(1)) * gscale;
+        buffers_w_tens(c.e,c.x,c.y,c.z) = w_tens;
+
+        Real phi_tens = (RSPLIT_ZERO) ? buffers_phi_tens(c.e,c.x,c.y,c.z) : 0;
+        phi_tens += buffers_v_i(c.e,0,c.x,c.y,c.z) * buffers_grad_phinh_i(c.e,0,c.x,c.y,c.z) + buffers_v_i(c.e,1,c.x,c.y,c.z) * buffers_grad_phinh_i(c.e,1,c.x,c.y,c.z);
+        phi_tens *= ndata_scale1;
+        phi_tens += state_w_i(c.e,data_n0,c.x,c.y,c.z) * gscale;
+
+        if (dscale) phi_tens += dscale * (buffers_v_i(c.e,0,c.x,c.y,c.z) * geometry_gradphis(c.e,0,c.x,c.y) + buffers_v_i(c.e,1,c.x,c.y,c.z) * geometry_gradphis(c.e,1,c.x,c.y)) * hvcoord_hybrid_bi_packed(c.z);
+
+        buffers_phi_tens(c.e,c.x,c.y,c.z) = phi_tens;
       }
     });
 }
@@ -483,7 +517,6 @@ void CaarFunctorImpl::caar_compute()
 
   const int rsplit = m_rsplit;
 
-
   auto buffers_theta_tens = viewAsReal(m_buffers.theta_tens);
   auto buffers_v_tens = viewAsReal(m_buffers.v_tens);
   auto &buffers_w_tens = buffers_omega_i; // reused
@@ -492,55 +525,6 @@ void CaarFunctorImpl::caar_compute()
   auto buffers_grad_phinh_i = viewAsReal(m_buffers.grad_phinh_i);
   auto buffers_grad_w_i = viewAsReal(m_buffers.grad_w_i);
   auto buffers_phi_tens = viewAsReal(m_buffers.phi_tens);
-
-  if (theta_hydrostatic_mode) {
-
-    Kokkos::parallel_for(
-      "caar compute_w_and_phi_tens hydrostatic",
-      SphereColOps::policy(m_num_elems, NUM_INTERFACE_LEV),
-      KOKKOS_LAMBDA(const Team &team) {
-        const SphereColOps c(sg, team);
-        c.grad(buffers_grad_phinh_i, state_phinh_i, data_n0);
-      });
-
-  } else {
-
-    auto &geometry_gradphis = m_geometry.m_gradphis;
-
-    auto hvcoord_hybrid_bi_packed = viewAsReal(m_hvcoord.hybrid_bi_packed);
-
-    const Real dscale = m_data.scale1 - m_data.scale2;
-    const Real gscale1 = m_data.scale1 * PhysicalConstants::g;
-    const Real gscale2 = m_data.scale2 * PhysicalConstants::g;
-    const Real ndata_scale1 = -m_data.scale1;
-
-    Kokkos::parallel_for(
-      "caar compute_w_and_phi_tens nonhydrostatic",
-      SphereColOps::policy(m_num_elems, NUM_INTERFACE_LEV),
-      KOKKOS_LAMBDA(const Team &team) {
-
-        const SphereColOps c(sg, team);
-
-        c.grad(buffers_grad_phinh_i, state_phinh_i, data_n0);
-        c.grad(buffers_grad_w_i, state_w_i, data_n0);
-        const Real gscale = (c.z == NUM_PHYSICAL_LEV) ? gscale1 : gscale2;
-
-        Real w_tens = (rsplit) ? 0 : buffers_w_tens(c.e,c.x,c.y,c.z);
-        w_tens += buffers_v_i(c.e,0,c.x,c.y,c.z) * buffers_grad_w_i(c.e,0,c.x,c.y,c.z) + buffers_v_i(c.e,1,c.x,c.y,c.z) * buffers_grad_w_i(c.e,1,c.x,c.y,c.z);
-        w_tens *= ndata_scale1;
-        w_tens += (buffers_dpnh_dp_i(c.e,c.x,c.y,c.z)-Real(1)) * gscale;
-        buffers_w_tens(c.e,c.x,c.y,c.z) = w_tens;
-
-        Real phi_tens = (rsplit) ? 0 : buffers_phi_tens(c.e,c.x,c.y,c.z);
-        phi_tens += buffers_v_i(c.e,0,c.x,c.y,c.z) * buffers_grad_phinh_i(c.e,0,c.x,c.y,c.z) + buffers_v_i(c.e,1,c.x,c.y,c.z) * buffers_grad_phinh_i(c.e,1,c.x,c.y,c.z);
-        phi_tens *= ndata_scale1;
-        phi_tens += state_w_i(c.e,data_n0,c.x,c.y,c.z) * gscale;
-
-        if (dscale) phi_tens += dscale * (buffers_v_i(c.e,0,c.x,c.y,c.z) * geometry_gradphis(c.e,0,c.x,c.y) + buffers_v_i(c.e,1,c.x,c.y,c.z) * geometry_gradphis(c.e,1,c.x,c.y)) * hvcoord_hybrid_bi_packed(c.z);
-
-        buffers_phi_tens(c.e,c.x,c.y,c.z) = phi_tens;
-      });
-  }
 
   if (m_theta_advection_form == AdvectionForm::Conservative) {
 
