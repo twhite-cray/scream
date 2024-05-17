@@ -339,34 +339,15 @@ void CaarFunctorImpl::epoch5_colOps()
     });
 }
 
-void CaarFunctorImpl::epoch6_col()
-{
-  auto buffers_eta_dot_dpdn = viewAsReal(m_buffers.eta_dot_dpdn);
-  auto buffers_theta_tens = viewAsReal(m_buffers.theta_tens);
-  auto buffers_vtheta_i = viewAsReal(m_buffers.vtheta_i);
-
-  Kokkos::parallel_for(
-    "caar_compute epoch6_col",
-    SphereCol::policy(m_num_elems, NUM_PHYSICAL_LEV),
-    KOKKOS_LAMBDA(const Team &team) {
-
-      const SphereCol c(team);
-
-      const Real etap = buffers_eta_dot_dpdn(c.e,c.x,c.y,c.z+1);
-      const Real etaz = buffers_eta_dot_dpdn(c.e,c.x,c.y,c.z);
-      const Real thetap = etap * buffers_vtheta_i(c.e,c.x,c.y,c.z+1);
-      const Real thetaz = etaz * buffers_vtheta_i(c.e,c.x,c.y,c.z);
-      buffers_theta_tens(c.e,c.x,c.y,c.z) = thetap - thetaz;
-    });
-}
-
-template <bool HYDROSTATIC>
+template <bool HYDROSTATIC, bool RSPLIT_ZERO>
 void CaarFunctorImpl::epochZ_col()
 {
   auto buffers_dp_tens = viewAsReal(m_buffers.dp_tens);
+  auto buffers_eta_dot_dpdn = viewAsReal(m_buffers.eta_dot_dpdn);
   auto buffers_phi_tens = viewAsReal(m_buffers.phi_tens);
   auto buffers_theta_tens = viewAsReal(m_buffers.theta_tens);
   auto buffers_v_tens = viewAsReal(m_buffers.v_tens);
+  auto buffers_vtheta_i = viewAsReal(m_buffers.vtheta_i);
   auto buffers_w_tens = viewAsReal(m_buffers.w_tens);
 
   const Real data_dt = m_data.dt;
@@ -402,6 +383,13 @@ void CaarFunctorImpl::epochZ_col()
       state_dp3d(c.e,data_np1,c.x,c.y,c.z) = dp_np1;
 
       Real theta_tens = buffers_theta_tens(c.e,c.x,c.y,c.z);
+      if (RSPLIT_ZERO) {
+        const Real etap = buffers_eta_dot_dpdn(c.e,c.x,c.y,c.z+1);
+        const Real etaz = buffers_eta_dot_dpdn(c.e,c.x,c.y,c.z);
+        const Real thetap = etap * buffers_vtheta_i(c.e,c.x,c.y,c.z+1);
+        const Real thetaz = etaz * buffers_vtheta_i(c.e,c.x,c.y,c.z);
+        theta_tens += thetap - thetaz;
+      }
       theta_tens *= -scale1_dt_spheremp;
       Real vtheta_np1 = state_vtheta_dp(c.e,data_nm1,c.x,c.y,c.z);
       vtheta_np1 *= scale3_spheremp;
@@ -480,7 +468,6 @@ void CaarFunctorImpl::caar_compute()
     else epoch5_colOps<false,false>();
   }
 
-  if (m_rsplit == 0) epoch6_col();
 
   const SphereGlobal sg(m_sphere_ops);
 
@@ -544,12 +531,7 @@ void CaarFunctorImpl::caar_compute()
         b.divInit(ttmp0, ttmp1, v0, v1);
 
         b.barrier();
-
-        const Real div = b.div(ttmp0, ttmp1);
-        Real theta_tens = (rsplit) ? 0 : buffers_theta_tens(b.e,b.x,b.y,b.z);
-        theta_tens += div;
-        buffers_theta_tens(b.e,b.x,b.y,b.z) = theta_tens;
-
+        buffers_theta_tens(b.e,b.x,b.y,b.z) = b.div(ttmp0, ttmp1);
       });
 
   } else { // AdvectionForm::NonConservative
@@ -572,9 +554,7 @@ void CaarFunctorImpl::caar_compute()
         Real theta_tens = buffers_div_vdp(b.e,b.x,b.y,b.z) * vtheta;
         theta_tens += grad0 * buffers_vdp(b.e,0,b.x,b.y,b.z);
         theta_tens += grad1 * buffers_vdp(b.e,1,b.x,b.y,b.z);
-
-        if (rsplit) buffers_theta_tens(b.e,b.x,b.y,b.z) = theta_tens;
-        else buffers_theta_tens(b.e,b.x,b.y,b.z) += theta_tens;
+        buffers_theta_tens(b.e,b.x,b.y,b.z) = theta_tens;
       });
   }
 
@@ -668,8 +648,13 @@ void CaarFunctorImpl::caar_compute()
       buffers_v_tens(b.e,1,b.x,b.y,b.z) = v_tens;
     });
 
-  if (m_theta_hydrostatic_mode) epochZ_col<true>();
-  else epochZ_col<false>();
+  if (m_theta_hydrostatic_mode) {
+    if (m_rsplit == 0) epochZ_col<true,true>();
+    else epochZ_col<true,false>();
+  } else {
+    if (m_rsplit == 0) epochZ_col<false,true>();
+    else epochZ_col<false,false>();
+  }
 }
 
 }
