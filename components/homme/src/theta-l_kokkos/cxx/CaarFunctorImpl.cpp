@@ -6,7 +6,6 @@ template <bool HYDROSTATIC, bool CONSERVATIVE>
 void CaarFunctorImpl::epoch1_blockOps()
 {
   auto buffers_dp_tens = viewAsReal(m_buffers.dp_tens);
-  auto buffers_div_vdp = viewAsReal(m_buffers.div_vdp);
   auto buffers_exner = viewAsReal(m_buffers.exner);
   auto buffers_phi = viewAsReal(m_buffers.phi);
   auto buffers_pnh = viewAsReal(m_buffers.pnh);
@@ -70,7 +69,6 @@ void CaarFunctorImpl::epoch1_blockOps()
       b.barrier();
 
       const Real dvdp = b.div(ttmp0, ttmp1);
-      buffers_div_vdp(b.e,b.x,b.y,b.z) = dvdp;
       buffers_dp_tens(b.e,b.x,b.y,b.z) = dvdp;
 
       if (CONSERVATIVE) {
@@ -89,7 +87,7 @@ void CaarFunctorImpl::epoch1_blockOps()
 template <bool RSPLIT_ZERO>
 void CaarFunctorImpl::epoch2_scanOps()
 {
-  auto buffers_div_vdp = viewAsReal(m_buffers.div_vdp);
+  auto buffers_dp_tens = viewAsReal(m_buffers.dp_tens);
   auto buffers_dp_i = viewAsReal(m_buffers.dp_i);
   auto buffers_eta_dot_dpdn = viewAsReal(m_buffers.eta_dot_dpdn);
   auto buffers_w_tens = viewAsReal(m_buffers.w_tens);
@@ -107,11 +105,11 @@ void CaarFunctorImpl::epoch2_scanOps()
       const SphereScanOps s(team);
 
       s.scan(buffers_dp_i, state_dp3d, data_n0, pi_i00);
-      s.scan(buffers_w_tens, buffers_div_vdp, 0);
+      s.scan(buffers_w_tens, buffers_dp_tens, 0);
 
       if (RSPLIT_ZERO) {
 
-        s.scan(buffers_eta_dot_dpdn, buffers_div_vdp, 0);
+        s.scan(buffers_eta_dot_dpdn, buffers_dp_tens, 0);
 
         const Real last = buffers_eta_dot_dpdn(s.e,s.x,s.y,NUM_PHYSICAL_LEV);
 
