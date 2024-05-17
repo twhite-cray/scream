@@ -2,7 +2,7 @@
 
 namespace Homme {
 
-template <bool HYDROSTATIC>
+template <bool HYDROSTATIC, bool CONSERVATIVE>
 void CaarFunctorImpl::epoch1_blockOps()
 {
   auto buffers_dp_tens = viewAsReal(m_buffers.dp_tens);
@@ -10,6 +10,7 @@ void CaarFunctorImpl::epoch1_blockOps()
   auto buffers_exner = viewAsReal(m_buffers.exner);
   auto buffers_phi = viewAsReal(m_buffers.phi);
   auto buffers_pnh = viewAsReal(m_buffers.pnh);
+  auto buffers_theta_tens = viewAsReal(m_buffers.theta_tens);
   auto buffers_vdp = viewAsReal(m_buffers.vdp);
 
   const Real data_eta_ave_w = m_data.eta_ave_w;
@@ -26,7 +27,7 @@ void CaarFunctorImpl::epoch1_blockOps()
 
   Kokkos::parallel_for(
     "caar_compute epoch1_blockOps",
-    SphereBlockOps::policy(m_num_elems, 2),
+    SphereBlockOps::policy(m_num_elems, 4),
     KOKKOS_LAMBDA(const Team &team) {
 
       SphereBlockOps b(sg, team);
@@ -53,11 +54,35 @@ void CaarFunctorImpl::epoch1_blockOps()
       SphereBlockScratch ttmp1(b);
       b.divInit(ttmp0, ttmp1, v0, v1);
 
+      SphereBlockScratch ttmp2(b);
+      SphereBlockScratch ttmp3(b);
+      Real vtheta = 0;
+
+      if (CONSERVATIVE) {
+        const Real sv0 = state_v(b.e,data_n0,0,b.x,b.y,b.z) * state_vtheta_dp(b.e,data_n0,b.x,b.y,b.z);
+        const Real sv1 = state_v(b.e,data_n0,1,b.x,b.y,b.z) * state_vtheta_dp(b.e,data_n0,b.x,b.y,b.z);
+        b.divInit(ttmp2, ttmp3, sv0, sv1);
+      } else {
+        vtheta = state_vtheta_dp(b.e,data_n0,b.x,b.y,b.z) / state_dp3d(b.e,data_n0,b.x,b.y,b.z);
+        b.gradInit(ttmp2, vtheta);
+      }
+
       b.barrier();
 
       const Real dvdp = b.div(ttmp0, ttmp1);
       buffers_div_vdp(b.e,b.x,b.y,b.z) = dvdp;
       buffers_dp_tens(b.e,b.x,b.y,b.z) = dvdp;
+
+      if (CONSERVATIVE) {
+        buffers_theta_tens(b.e,b.x,b.y,b.z) = b.div(ttmp2, ttmp3);
+      } else {
+        Real grad0, grad1;
+        b.grad(grad0, grad1, ttmp2);
+        Real theta_tens = dvdp * vtheta;
+        theta_tens += grad0 * v0;
+        theta_tens += grad1 * v1;
+        buffers_theta_tens(b.e,b.x,b.y,b.z) = theta_tens;
+      }
     });
 }
 
@@ -142,7 +167,8 @@ void CaarFunctorImpl::epoch3_blockOps()
       if (b.skip()) return;
 
       const Real pi = 0.5 * (buffers_dp_i(b.e,b.x,b.y,b.z) + buffers_dp_i(b.e,b.x,b.y,b.z+1));
-      const SphereBlockScratch tmp0(b, pi);
+      SphereBlockScratch tmp0(b);
+      b.gradInit(tmp0, pi);
 
       if (HYDROSTATIC) {
         Real exner = pi;
@@ -444,8 +470,13 @@ void CaarFunctorImpl::epochZ_col()
 void CaarFunctorImpl::caar_compute() 
 {
 
-  if (m_theta_hydrostatic_mode) epoch1_blockOps<true>();
-  else epoch1_blockOps<false>();
+  if (m_theta_hydrostatic_mode) {
+    if (m_theta_advection_form == AdvectionForm::Conservative) epoch1_blockOps<true,true>();
+    else epoch1_blockOps<true,false>();
+  } else {
+    if (m_theta_advection_form == AdvectionForm::Conservative) epoch1_blockOps<false,true>();
+    else epoch1_blockOps<false,false>();
+  }
 
   if (m_rsplit == 0) epoch2_scanOps<true>();
   else epoch2_scanOps<false>();
@@ -513,51 +544,6 @@ void CaarFunctorImpl::caar_compute()
   auto buffers_grad_w_i = viewAsReal(m_buffers.grad_w_i);
   auto buffers_phi_tens = viewAsReal(m_buffers.phi_tens);
 
-  if (m_theta_advection_form == AdvectionForm::Conservative) {
-
-    Kokkos::parallel_for(
-      "caar compute_dp_and_theta_tens conservative",
-      SphereBlockOps::policy(m_num_elems, 2),
-      KOKKOS_LAMBDA(const Team &team) {
-
-        SphereBlockOps b(sg, team); 
-        if (b.skip()) return;
-
-        const Real v0 = state_v(b.e,data_n0,0,b.x,b.y,b.z) * state_vtheta_dp(b.e,data_n0,b.x,b.y,b.z);
-        const Real v1 = state_v(b.e,data_n0,1,b.x,b.y,b.z) * state_vtheta_dp(b.e,data_n0,b.x,b.y,b.z);
-
-        SphereBlockScratch ttmp0(b);
-        SphereBlockScratch ttmp1(b);
-        b.divInit(ttmp0, ttmp1, v0, v1);
-
-        b.barrier();
-        buffers_theta_tens(b.e,b.x,b.y,b.z) = b.div(ttmp0, ttmp1);
-      });
-
-  } else { // AdvectionForm::NonConservative
-
-    Kokkos::parallel_for(
-      "caar compute_dp_and_theta_tens nonconservative",
-      SphereBlockOps::policy(m_num_elems, 1),
-      KOKKOS_LAMBDA(const Team &team) {
-
-        SphereBlockOps b(sg, team); 
-        if (b.skip()) return;
-
-        const Real vtheta = state_vtheta_dp(b.e,data_n0,b.x,b.y,b.z) / state_dp3d(b.e,data_n0,b.x,b.y,b.z);
-        SphereBlockScratch ttmp0(b, vtheta);
-
-        b.barrier();
-
-        Real grad0, grad1;
-        b.grad(grad0, grad1, ttmp0);
-        Real theta_tens = buffers_div_vdp(b.e,b.x,b.y,b.z) * vtheta;
-        theta_tens += grad0 * buffers_vdp(b.e,0,b.x,b.y,b.z);
-        theta_tens += grad1 * buffers_vdp(b.e,1,b.x,b.y,b.z);
-        buffers_theta_tens(b.e,b.x,b.y,b.z) = theta_tens;
-      });
-  }
-
   auto &geometry_fcor = m_geometry.m_fcor;
   const bool pgrad_correction = m_pgrad_correction;
 
@@ -569,14 +555,17 @@ void CaarFunctorImpl::caar_compute()
       SphereBlockOps b(sg, team);
       if (b.skip()) return;
 
+      SphereBlockScratch ttmp0(b);
       const Real w2 = (theta_hydrostatic_mode) ? 0 : 0.25 * (state_w_i(b.e,data_n0,b.x,b.y,b.z) * state_w_i(b.e,data_n0,b.x,b.y,b.z) + state_w_i(b.e,data_n0,b.x,b.y,b.z+1) * state_w_i(b.e,data_n0,b.x,b.y,b.z+1));
-      const SphereBlockScratch ttmp0(b, w2);
+      b.gradInit(ttmp0, w2);
 
+      SphereBlockScratch ttmp1(b);
       const Real exneriz = buffers_exner(b.e,b.x,b.y,b.z);
-      const SphereBlockScratch ttmp1(b, exneriz);
+      b.gradInit(ttmp1, exneriz);
 
+      SphereBlockScratch ttmp2(b);
       const Real log_exneriz = (pgrad_correction) ? log(exneriz) : 0;
-      const SphereBlockScratch ttmp2(b, log_exneriz);
+      b.gradInit(ttmp2, log_exneriz);
 
       const Real v0 = state_v(b.e,data_n0,0,b.x,b.y,b.z);
       const Real v1 = state_v(b.e,data_n0,1,b.x,b.y,b.z);
@@ -585,7 +574,8 @@ void CaarFunctorImpl::caar_compute()
       SphereBlockScratch ttmp4(b);
       b.vortInit(ttmp3, ttmp4, v0, v1);
 
-      const SphereBlockScratch ttmp5(b, 0.5 * (v0 * v0 + v1 * v1));
+      SphereBlockScratch ttmp5(b);
+      b.gradInit(ttmp5, 0.5 * (v0 * v0 + v1 * v1));
 
       b.barrier();
 

@@ -1220,14 +1220,7 @@ struct SphereBlockOps;
 struct SphereBlockScratch {
   SphereBlockScratchView v;
   SphereBlockScratchSubview sv;
-
   KOKKOS_INLINE_FUNCTION SphereBlockScratch(const SphereBlockOps &b);
-  KOKKOS_INLINE_FUNCTION SphereBlockScratch(const SphereBlockOps &b, const Real val);
-
-  KOKKOS_INLINE_FUNCTION Real operator()(const int x, const int y) const
-  {
-    return sv(x,y);
-  }
 };
 
 struct SphereBlockOps {
@@ -1276,8 +1269,8 @@ struct SphereBlockOps {
     Real du = 0;
     Real dv = 0;
     for (int j = 0; j < NP; j++) {
-      du += dvvy[j] * t0(x,j);
-      dv += dvvx[j] * t1(j,y);
+      du += dvvy[j] * t0.sv(x,j);
+      dv += dvvx[j] * t1.sv(j,y);
     }
     if (rrdmd == 0) rrdmd = (1.0 / metdet) * scale_factor_inv;
     return (du + dv) * rrdmd;
@@ -1294,13 +1287,18 @@ struct SphereBlockOps {
     Real s0 = 0;
     Real s1 = 0;
     for (int j = 0; j < NP; j++) {
-      s0 += dvvy[j] * t(x,j);
-      s1 += dvvx[j] * t(j,y);
+      s0 += dvvy[j] * t.sv(x,j);
+      s1 += dvvx[j] * t.sv(j,y);
     }
     s0 *= scale_factor_inv;
     s1 *= scale_factor_inv;
     g0 = dinv[0][0] * s0 + dinv[0][1] * s1;
     g1 = dinv[1][0] * s0 + dinv[1][1] * s1;
+  }
+
+  KOKKOS_INLINE_FUNCTION void gradInit(SphereBlockScratch &t0, const Real v0)
+  {
+    t0.sv(x,y) = v0;
   }
 
   KOKKOS_INLINE_FUNCTION bool skip() const { return (z >= NUM_PHYSICAL_LEV); }
@@ -1310,8 +1308,8 @@ struct SphereBlockOps {
     Real du = 0;
     Real dv = 0;
     for (int j = 0; j < NP; j++) {
-      du += dvvx[j] * t0(j,y);
-      dv += dvvy[j] * t1(x,j);
+      du += dvvx[j] * t0.sv(j,y);
+      dv += dvvy[j] * t1.sv(x,j);
     }
     if (rrdmd == 0) rrdmd = (1.0 / metdet) * scale_factor_inv;
     return (dv - du) * rrdmd;
@@ -1335,12 +1333,6 @@ KOKKOS_INLINE_FUNCTION SphereBlockScratch::SphereBlockScratch(const SphereBlockO
   v(b.t.team_scratch(0)),
   sv(Kokkos::subview(v, b.z % SPHERE_BLOCK_LEV, Kokkos::ALL, Kokkos::ALL))
 {}
-
-KOKKOS_INLINE_FUNCTION SphereBlockScratch::SphereBlockScratch(const SphereBlockOps &b, const Real val):
-  SphereBlockScratch(b)
-{
-  sv(b.x,b.y) = val;
-}
 
 struct SphereCol {
   const Team &t;
