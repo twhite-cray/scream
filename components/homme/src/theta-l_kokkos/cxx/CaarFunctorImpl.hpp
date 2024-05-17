@@ -129,7 +129,8 @@ struct CaarFunctorImpl {
   template <bool HYDROSTATIC, bool RSPLIT_ZERO> void epoch3_blockOps();
   void epoch4_scanOps();
   template <bool HYDROSTATIC, bool RSPLIT_ZERO> void epoch5_colOps();
-  template <bool HYDROSTATIC, bool RSPLIT_ZERO> void epochZ_col();
+  template <bool HYDROSTATIC, bool RSPLIT_ZERO, bool PGRAD_CORRECTION> void epoch6_blockOps();
+  template <bool HYDROSTATIC, bool RSPLIT_ZERO> void epoch7_col();
   void caar_compute();
 
   public:
