@@ -119,7 +119,6 @@ struct CaarFunctorImpl {
 
   Kokkos::Array<std::shared_ptr<BoundaryExchange>, NUM_TIME_LEVELS> m_bes;
 
-  private:
   template <bool HYDROSTATIC, bool CONSERVATIVE> void epoch1_blockOps();
   template <bool RSPLIT_ZERO> void epoch2_scanOps();
   template <bool HYDROSTATIC, bool RSPLIT_ZERO> void epoch3_blockOps();

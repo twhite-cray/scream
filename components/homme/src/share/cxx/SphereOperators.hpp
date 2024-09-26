@@ -1176,7 +1176,11 @@ public:
   Real m_scale_factor_inv, m_laplacian_rigid_factor;
 };
 
+#ifdef KOKKOS_ENABLE_CUDA
+using TeamPolicy = Kokkos::TeamPolicy<ExecSpace,Kokkos::LaunchBounds<1024,1> >;
+#else
 using TeamPolicy = Kokkos::TeamPolicy<ExecSpace>;
+#endif
 using Team = TeamPolicy::member_type;
 
 static constexpr int NPNP = NP * NP;

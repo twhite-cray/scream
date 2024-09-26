@@ -384,7 +384,7 @@ void CaarFunctorImpl::epoch6_blockOps()
   auto state_w_i = viewAsReal(m_state.m_w_i);
 
   Kokkos::parallel_for(
-    "caar compute_v_tens",
+    __PRETTY_FUNCTION__,
     SphereBlockOps::policy(m_num_elems, 6),
     KOKKOS_LAMBDA(const Team &team) {
 
