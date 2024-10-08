@@ -1184,11 +1184,13 @@ using TeamPolicy = Kokkos::TeamPolicy<ExecSpace>;
 using Team = TeamPolicy::member_type;
 
 static constexpr int NPNP = NP * NP;
+#undef SPHERE_SINGLE
 #if defined(KOKKOS_ENABLE_HIP)
 static constexpr int WARP_SIZE = warpSize;
 #elif defined(KOKKOS_ENABLE_CUDA) || defined(KOKKOS_ENABLE_SYCL)
 static constexpr int WARP_SIZE = 32;
 #else
+#define SPHERE_SINGLE
 static constexpr int WARP_SIZE = 1;
 #endif
 
@@ -1358,9 +1360,24 @@ struct SphereCol {
     y = xy % NP;
     z = t.team_rank();
   }
+
+  template <typename F>
+  KOKKOS_INLINE_FUNCTION void parallel_for(const int num_lev, F f)
+  {
+#ifdef SPHERE_SINGLE
+    for (z = 0; z < num_lev; z++) f();
+#else
+    f();
+#endif
+  }
+
   static TeamPolicy policy(const int num_elems, const int num_lev)
   {
+#ifdef SPHERE_SINGLE
+    return TeamPolicy(num_elems * NPNP, 1);
+#else
     return TeamPolicy(num_elems * NPNP, num_lev);
+#endif
   }
 };
 

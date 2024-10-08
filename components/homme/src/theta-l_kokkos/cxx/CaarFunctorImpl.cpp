@@ -289,77 +289,79 @@ void CaarFunctorImpl::epoch5_colOps()
     SphereColOps::policy(m_num_elems, NUM_INTERFACE_LEV),
     KOKKOS_LAMBDA(const Team &team) {
 
-      const SphereColOps c(sg, team);
+      SphereColOps c(sg, team);
+      c.parallel_for(NUM_INTERFACE_LEV, [&]{
 
-      c.grad(buffers_grad_phinh_i, state_phinh_i, data_n0);
-      if (!HYDROSTATIC) c.grad(buffers_grad_w_i, state_w_i, data_n0);
+        c.grad(buffers_grad_phinh_i, state_phinh_i, data_n0);
+        if (!HYDROSTATIC) c.grad(buffers_grad_w_i, state_w_i, data_n0);
 
-      const Real dm = (c.z == 0) ? 0 : state_dp3d(c.e,data_n0,c.x,c.y,c.z-1);
-      const Real dz = (c.z == NUM_PHYSICAL_LEV) ? 0 : state_dp3d(c.e,data_n0,c.x,c.y,c.z);
-      const Real dp_i = (c.z == 0) ? dz : (c.z == NUM_PHYSICAL_LEV) ? dm : 0.5 * (dz + dm);
-      buffers_dp_i(c.e,c.x,c.y,c.z) = dp_i;
-
-      if (!HYDROSTATIC) {
-
-        const Real v0m = (c.z == 0) ? 0 : state_v(c.e,data_n0,0,c.x,c.y,c.z-1);
-        const Real v0z = (c.z == NUM_PHYSICAL_LEV) ? 0 : state_v(c.e,data_n0,0,c.x,c.y,c.z);
-        const Real v_i0 = (c.z == 0) ? v0z : (c.z == NUM_PHYSICAL_LEV) ? v0m : (dz * v0z + dm * v0m) / (dm + dz);
-        buffers_v_i(c.e,0,c.x,c.y,c.z) = v_i0;
-
-        const Real v1m = (c.z == 0) ? 0 : state_v(c.e,data_n0,1,c.x,c.y,c.z-1);
-        const Real v1z = (c.z == NUM_PHYSICAL_LEV) ? 0 : state_v(c.e,data_n0,1,c.x,c.y,c.z);
-        const Real v_i1 = (c.z == 0) ? v1z : (c.z == NUM_PHYSICAL_LEV) ? v1m :(dz * v1z + dm * v1m) / (dm + dz);
-        buffers_v_i(c.e,1,c.x,c.y,c.z) = v_i1;
-
-        const Real pm = (c.z == 0) ? pi_i00 : buffers_pnh(c.e,c.x,c.y,c.z-1);
-        const Real pz = (c.z == NUM_PHYSICAL_LEV) ? pm + 0.5 * dm : buffers_pnh(c.e,c.x,c.y,c.z);
-        buffers_dpnh_dp_i(c.e,c.x,c.y,c.z) = 2.0 * (pz - pm) / (dm + dz);
-      }
-
-      if (RSPLIT_ZERO) {
-
-        const Real phim = (c.z == 0) ? 0 : buffers_phi(c.e,c.x,c.y,c.z-1);
-        const Real phiz = (c.z == NUM_PHYSICAL_LEV) ? 0 : buffers_phi(c.e,c.x,c.y,c.z);
+        const Real dm = (c.z == 0) ? 0 : state_dp3d(c.e,data_n0,c.x,c.y,c.z-1);
+        const Real dz = (c.z == NUM_PHYSICAL_LEV) ? 0 : state_dp3d(c.e,data_n0,c.x,c.y,c.z);
+        const Real dp_i = (c.z == 0) ? dz : (c.z == NUM_PHYSICAL_LEV) ? dm : 0.5 * (dz + dm);
+        buffers_dp_i(c.e,c.x,c.y,c.z) = dp_i;
 
         if (!HYDROSTATIC) {
-          const Real phi_vadv = ((c.z == 0) || (c.z == NUM_PHYSICAL_LEV)) ? 0 : (phiz - phim) * buffers_eta_dot_dpdn(c.e,c.x,c.y,c.z) / dp_i;
-          buffers_phi_tens(c.e,c.x,c.y,c.z) = phi_vadv;
+
+          const Real v0m = (c.z == 0) ? 0 : state_v(c.e,data_n0,0,c.x,c.y,c.z-1);
+          const Real v0z = (c.z == NUM_PHYSICAL_LEV) ? 0 : state_v(c.e,data_n0,0,c.x,c.y,c.z);
+          const Real v_i0 = (c.z == 0) ? v0z : (c.z == NUM_PHYSICAL_LEV) ? v0m : (dz * v0z + dm * v0m) / (dm + dz);
+          buffers_v_i(c.e,0,c.x,c.y,c.z) = v_i0;
+
+          const Real v1m = (c.z == 0) ? 0 : state_v(c.e,data_n0,1,c.x,c.y,c.z-1);
+          const Real v1z = (c.z == NUM_PHYSICAL_LEV) ? 0 : state_v(c.e,data_n0,1,c.x,c.y,c.z);
+          const Real v_i1 = (c.z == 0) ? v1z : (c.z == NUM_PHYSICAL_LEV) ? v1m :(dz * v1z + dm * v1m) / (dm + dz);
+          buffers_v_i(c.e,1,c.x,c.y,c.z) = v_i1;
+
+          const Real pm = (c.z == 0) ? pi_i00 : buffers_pnh(c.e,c.x,c.y,c.z-1);
+          const Real pz = (c.z == NUM_PHYSICAL_LEV) ? pm + 0.5 * dm : buffers_pnh(c.e,c.x,c.y,c.z);
+          buffers_dpnh_dp_i(c.e,c.x,c.y,c.z) = 2.0 * (pz - pm) / (dm + dz);
         }
 
-        Real vtheta_i = phiz - phim;
-        if (!(c.z == 0) && !(c.z == NUM_PHYSICAL_LEV)) {
-          const Real dexner = buffers_exner(c.e,c.x,c.y,c.z) - buffers_exner(c.e,c.x,c.y,c.z-1);
-          vtheta_i /= dexner;
-        }
-        vtheta_i /= -PhysicalConstants::cp;
-        if (!HYDROSTATIC) vtheta_i *= buffers_dpnh_dp_i(c.e,c.x,c.y,c.z);
-        buffers_vtheta_i(c.e,c.x,c.y,c.z) = vtheta_i;
-      }
-
-      if (!HYDROSTATIC) {
-
-        Real w_tens = 0;
         if (RSPLIT_ZERO) {
-          const Real tempm = (c.z == 0) ? 0 : buffers_temp(c.e,c.x,c.y,c.z-1);
-          const Real tempz = (c.z == NUM_PHYSICAL_LEV) ? 0 : buffers_temp(c.e,c.x,c.y,c.z);
-          const Real dw = (c.z == 0) ? tempz : (c.z == NUM_PHYSICAL_LEV) ? tempm : 0.5 * (tempz + tempm);
-          w_tens = dw / dp_i;
+
+          const Real phim = (c.z == 0) ? 0 : buffers_phi(c.e,c.x,c.y,c.z-1);
+          const Real phiz = (c.z == NUM_PHYSICAL_LEV) ? 0 : buffers_phi(c.e,c.x,c.y,c.z);
+
+          if (!HYDROSTATIC) {
+            const Real phi_vadv = ((c.z == 0) || (c.z == NUM_PHYSICAL_LEV)) ? 0 : (phiz - phim) * buffers_eta_dot_dpdn(c.e,c.x,c.y,c.z) / dp_i;
+            buffers_phi_tens(c.e,c.x,c.y,c.z) = phi_vadv;
+          }
+
+          Real vtheta_i = phiz - phim;
+          if (!(c.z == 0) && !(c.z == NUM_PHYSICAL_LEV)) {
+            const Real dexner = buffers_exner(c.e,c.x,c.y,c.z) - buffers_exner(c.e,c.x,c.y,c.z-1);
+            vtheta_i /= dexner;
+          }
+          vtheta_i /= -PhysicalConstants::cp;
+          if (!HYDROSTATIC) vtheta_i *= buffers_dpnh_dp_i(c.e,c.x,c.y,c.z);
+          buffers_vtheta_i(c.e,c.x,c.y,c.z) = vtheta_i;
         }
-        w_tens += buffers_v_i(c.e,0,c.x,c.y,c.z) * buffers_grad_w_i(c.e,0,c.x,c.y,c.z) + buffers_v_i(c.e,1,c.x,c.y,c.z) * buffers_grad_w_i(c.e,1,c.x,c.y,c.z);
-        w_tens *= ndata_scale1;
-        const Real gscale = (c.z == NUM_PHYSICAL_LEV) ? gscale1 : gscale2;
-        w_tens += (buffers_dpnh_dp_i(c.e,c.x,c.y,c.z)-Real(1)) * gscale;
-        buffers_w_tens(c.e,c.x,c.y,c.z) = w_tens;
 
-        Real phi_tens = (RSPLIT_ZERO) ? buffers_phi_tens(c.e,c.x,c.y,c.z) : 0;
-        phi_tens += buffers_v_i(c.e,0,c.x,c.y,c.z) * buffers_grad_phinh_i(c.e,0,c.x,c.y,c.z) + buffers_v_i(c.e,1,c.x,c.y,c.z) * buffers_grad_phinh_i(c.e,1,c.x,c.y,c.z);
-        phi_tens *= ndata_scale1;
-        phi_tens += state_w_i(c.e,data_n0,c.x,c.y,c.z) * gscale;
+        if (!HYDROSTATIC) {
 
-        if (dscale) phi_tens += dscale * (buffers_v_i(c.e,0,c.x,c.y,c.z) * geometry_gradphis(c.e,0,c.x,c.y) + buffers_v_i(c.e,1,c.x,c.y,c.z) * geometry_gradphis(c.e,1,c.x,c.y)) * hvcoord_hybrid_bi_packed(c.z);
+          Real w_tens = 0;
+          if (RSPLIT_ZERO) {
+            const Real tempm = (c.z == 0) ? 0 : buffers_temp(c.e,c.x,c.y,c.z-1);
+            const Real tempz = (c.z == NUM_PHYSICAL_LEV) ? 0 : buffers_temp(c.e,c.x,c.y,c.z);
+            const Real dw = (c.z == 0) ? tempz : (c.z == NUM_PHYSICAL_LEV) ? tempm : 0.5 * (tempz + tempm);
+            w_tens = dw / dp_i;
+          }
+          w_tens += buffers_v_i(c.e,0,c.x,c.y,c.z) * buffers_grad_w_i(c.e,0,c.x,c.y,c.z) + buffers_v_i(c.e,1,c.x,c.y,c.z) * buffers_grad_w_i(c.e,1,c.x,c.y,c.z);
+          w_tens *= ndata_scale1;
+          const Real gscale = (c.z == NUM_PHYSICAL_LEV) ? gscale1 : gscale2;
+          w_tens += (buffers_dpnh_dp_i(c.e,c.x,c.y,c.z)-Real(1)) * gscale;
+          buffers_w_tens(c.e,c.x,c.y,c.z) = w_tens;
 
-        buffers_phi_tens(c.e,c.x,c.y,c.z) = phi_tens;
-      }
+          Real phi_tens = (RSPLIT_ZERO) ? buffers_phi_tens(c.e,c.x,c.y,c.z) : 0;
+          phi_tens += buffers_v_i(c.e,0,c.x,c.y,c.z) * buffers_grad_phinh_i(c.e,0,c.x,c.y,c.z) + buffers_v_i(c.e,1,c.x,c.y,c.z) * buffers_grad_phinh_i(c.e,1,c.x,c.y,c.z);
+          phi_tens *= ndata_scale1;
+          phi_tens += state_w_i(c.e,data_n0,c.x,c.y,c.z) * gscale;
+
+          if (dscale) phi_tens += dscale * (buffers_v_i(c.e,0,c.x,c.y,c.z) * geometry_gradphis(c.e,0,c.x,c.y) + buffers_v_i(c.e,1,c.x,c.y,c.z) * geometry_gradphis(c.e,1,c.x,c.y)) * hvcoord_hybrid_bi_packed(c.z);
+
+          buffers_phi_tens(c.e,c.x,c.y,c.z) = phi_tens;
+        }
+      });
     });
 }
 
@@ -506,74 +508,76 @@ void CaarFunctorImpl::epoch7_col()
     SphereCol::policy(m_num_elems, NUM_PHYSICAL_LEV),
     KOKKOS_LAMBDA(const Team &team) {
 
-      const SphereCol c(team);
+      SphereCol c(team);
+      c.parallel_for(NUM_PHYSICAL_LEV, [&] {
 
-      const Real spheremp = geometry_spheremp(c.e,c.x,c.y);
-      const Real scale1_dt_spheremp = scale1_dt * spheremp;
-      const Real scale3_spheremp = data_scale3 * spheremp;
+        const Real spheremp = geometry_spheremp(c.e,c.x,c.y);
+        const Real scale1_dt_spheremp = scale1_dt * spheremp;
+        const Real scale3_spheremp = data_scale3 * spheremp;
 
-      Real dp_tens = buffers_dp_tens(c.e,c.x,c.y,c.z);
-      dp_tens *= scale1_dt_spheremp;
-      Real dp_np1 = scale3_spheremp * state_dp3d(c.e,data_nm1,c.x,c.y,c.z);
-      dp_np1 -= dp_tens;
-      state_dp3d(c.e,data_np1,c.x,c.y,c.z) = dp_np1;
+        Real dp_tens = buffers_dp_tens(c.e,c.x,c.y,c.z);
+        dp_tens *= scale1_dt_spheremp;
+        Real dp_np1 = scale3_spheremp * state_dp3d(c.e,data_nm1,c.x,c.y,c.z);
+        dp_np1 -= dp_tens;
+        state_dp3d(c.e,data_np1,c.x,c.y,c.z) = dp_np1;
 
-      Real theta_tens = buffers_theta_tens(c.e,c.x,c.y,c.z);
-      if (RSPLIT_ZERO) {
-        const Real etap = buffers_eta_dot_dpdn(c.e,c.x,c.y,c.z+1);
-        const Real etaz = buffers_eta_dot_dpdn(c.e,c.x,c.y,c.z);
-        const Real thetap = etap * buffers_vtheta_i(c.e,c.x,c.y,c.z+1);
-        const Real thetaz = etaz * buffers_vtheta_i(c.e,c.x,c.y,c.z);
-        theta_tens += thetap - thetaz;
-      }
-      theta_tens *= -scale1_dt_spheremp;
-      Real vtheta_np1 = state_vtheta_dp(c.e,data_nm1,c.x,c.y,c.z);
-      vtheta_np1 *= scale3_spheremp;
-      vtheta_np1 += theta_tens;
-      state_vtheta_dp(c.e,data_np1,c.x,c.y,c.z) = vtheta_np1;
+        Real theta_tens = buffers_theta_tens(c.e,c.x,c.y,c.z);
+        if (RSPLIT_ZERO) {
+          const Real etap = buffers_eta_dot_dpdn(c.e,c.x,c.y,c.z+1);
+          const Real etaz = buffers_eta_dot_dpdn(c.e,c.x,c.y,c.z);
+          const Real thetap = etap * buffers_vtheta_i(c.e,c.x,c.y,c.z+1);
+          const Real thetaz = etaz * buffers_vtheta_i(c.e,c.x,c.y,c.z);
+          theta_tens += thetap - thetaz;
+        }
+        theta_tens *= -scale1_dt_spheremp;
+        Real vtheta_np1 = state_vtheta_dp(c.e,data_nm1,c.x,c.y,c.z);
+        vtheta_np1 *= scale3_spheremp;
+        vtheta_np1 += theta_tens;
+        state_vtheta_dp(c.e,data_np1,c.x,c.y,c.z) = vtheta_np1;
 
-      Real u_tens = buffers_v_tens(c.e,0,c.x,c.y,c.z);
-      u_tens *= -scale1_dt_spheremp;
-      Real u_np1 = state_v(c.e,data_nm1,0,c.x,c.y,c.z);
-      u_np1 *= scale3_spheremp;
-      u_np1 += u_tens;
-      state_v(c.e,data_np1,0,c.x,c.y,c.z) = u_np1;
+        Real u_tens = buffers_v_tens(c.e,0,c.x,c.y,c.z);
+        u_tens *= -scale1_dt_spheremp;
+        Real u_np1 = state_v(c.e,data_nm1,0,c.x,c.y,c.z);
+        u_np1 *= scale3_spheremp;
+        u_np1 += u_tens;
+        state_v(c.e,data_np1,0,c.x,c.y,c.z) = u_np1;
 
-      Real v_tens = buffers_v_tens(c.e,1,c.x,c.y,c.z);
-      v_tens *= -scale1_dt_spheremp;
-      Real v_np1 = state_v(c.e,data_nm1,1,c.x,c.y,c.z);
-      v_np1 *= scale3_spheremp;
-      v_np1 += v_tens;
-      state_v(c.e,data_np1,1,c.x,c.y,c.z) = v_np1;
+        Real v_tens = buffers_v_tens(c.e,1,c.x,c.y,c.z);
+        v_tens *= -scale1_dt_spheremp;
+        Real v_np1 = state_v(c.e,data_nm1,1,c.x,c.y,c.z);
+        v_np1 *= scale3_spheremp;
+        v_np1 += v_tens;
+        state_v(c.e,data_np1,1,c.x,c.y,c.z) = v_np1;
 
-      if (!HYDROSTATIC) {
+        if (!HYDROSTATIC) {
 
-        const Real dt_spheremp = data_dt * spheremp;
+          const Real dt_spheremp = data_dt * spheremp;
 
-        Real phi_tens = buffers_phi_tens(c.e,c.x,c.y,c.z);
-        phi_tens *= dt_spheremp;
-        Real phi_np1 = state_phinh_i(c.e,data_nm1,c.x,c.y,c.z);
-        phi_np1 *= scale3_spheremp;
-        phi_np1 += phi_tens;
-        state_phinh_i(c.e,data_np1,c.x,c.y,c.z) = phi_np1;
+          Real phi_tens = buffers_phi_tens(c.e,c.x,c.y,c.z);
+          phi_tens *= dt_spheremp;
+          Real phi_np1 = state_phinh_i(c.e,data_nm1,c.x,c.y,c.z);
+          phi_np1 *= scale3_spheremp;
+          phi_np1 += phi_tens;
+          state_phinh_i(c.e,data_np1,c.x,c.y,c.z) = phi_np1;
 
-        Real w_tens = buffers_w_tens(c.e,c.x,c.y,c.z);
-        w_tens *= dt_spheremp;
-        Real w_np1 = state_w_i(c.e,data_nm1,c.x,c.y,c.z);
-        w_np1 *= scale3_spheremp;
-        w_np1 += w_tens;
-        state_w_i(c.e,data_np1,c.x,c.y,c.z) = w_np1;
-
-        if (c.z == NUM_PHYSICAL_LEV-1) {
-          Real w_tens = buffers_w_tens(c.e,c.x,c.y,NUM_PHYSICAL_LEV);
+          Real w_tens = buffers_w_tens(c.e,c.x,c.y,c.z);
           w_tens *= dt_spheremp;
-          buffers_w_tens(c.e,c.x,c.y,NUM_PHYSICAL_LEV) = w_tens;
-          Real w_np1 = state_w_i(c.e,data_nm1,c.x,c.y,NUM_PHYSICAL_LEV);
+          Real w_np1 = state_w_i(c.e,data_nm1,c.x,c.y,c.z);
           w_np1 *= scale3_spheremp;
           w_np1 += w_tens;
-          state_w_i(c.e,data_np1,c.x,c.y,NUM_PHYSICAL_LEV) = w_np1;
+          state_w_i(c.e,data_np1,c.x,c.y,c.z) = w_np1;
+
+          if (c.z == NUM_PHYSICAL_LEV-1) {
+            Real w_tens = buffers_w_tens(c.e,c.x,c.y,NUM_PHYSICAL_LEV);
+            w_tens *= dt_spheremp;
+            buffers_w_tens(c.e,c.x,c.y,NUM_PHYSICAL_LEV) = w_tens;
+            Real w_np1 = state_w_i(c.e,data_nm1,c.x,c.y,NUM_PHYSICAL_LEV);
+            w_np1 *= scale3_spheremp;
+            w_np1 += w_tens;
+            state_w_i(c.e,data_np1,c.x,c.y,NUM_PHYSICAL_LEV) = w_np1;
+          }
         }
-      }
+      });
     });
 }
 
