@@ -30,6 +30,7 @@ void CaarFunctorImpl::epoch1_blockOps()
     KOKKOS_LAMBDA(const Team &team) {
 
       SphereBlockOps b(sg, team);
+      SphereBlockScratch ttmp0(b), ttmp1(b), ttmp2(b), ttmp3(b);
       if (b.skip()) return;
 
       if (!HYDROSTATIC) {
@@ -44,17 +45,12 @@ void CaarFunctorImpl::epoch1_blockOps()
 
       const Real v0 = state_v(b.e,data_n0,0,b.x,b.y,b.z) * state_dp3d(b.e,data_n0,b.x,b.y,b.z);
       const Real v1 = state_v(b.e,data_n0,1,b.x,b.y,b.z) * state_dp3d(b.e,data_n0,b.x,b.y,b.z);
+      b.divInit(ttmp0, ttmp1, v0, v1);
       buffers_vdp(b.e,0,b.x,b.y,b.z) = v0;
       buffers_vdp(b.e,1,b.x,b.y,b.z) = v1;
       derived_vn0(b.e,0,b.x,b.y,b.z) += data_eta_ave_w * v0;
       derived_vn0(b.e,1,b.x,b.y,b.z) += data_eta_ave_w * v1;
 
-      SphereBlockScratch ttmp0(b);
-      SphereBlockScratch ttmp1(b);
-      b.divInit(ttmp0, ttmp1, v0, v1);
-
-      SphereBlockScratch ttmp2(b);
-      SphereBlockScratch ttmp3(b);
       Real vtheta = 0;
 
       if (CONSERVATIVE) {
@@ -162,10 +158,10 @@ void CaarFunctorImpl::epoch3_blockOps()
     KOKKOS_LAMBDA(const Team &team) {
 
       SphereBlockOps b(sg, team);
+      SphereBlockScratch tmp0(b);
       if (b.skip()) return;
 
       const Real pi = 0.5 * (buffers_dp_i(b.e,b.x,b.y,b.z) + buffers_dp_i(b.e,b.x,b.y,b.z+1));
-      SphereBlockScratch tmp0(b);
       b.gradInit(tmp0, pi);
 
       if (HYDROSTATIC) {
@@ -391,28 +387,22 @@ void CaarFunctorImpl::epoch6_blockOps()
     KOKKOS_LAMBDA(const Team &team) {
 
       SphereBlockOps b(sg, team);
+      SphereBlockScratch ttmp0(b), ttmp1(b), ttmp2(b), ttmp3(b), ttmp4(b), ttmp5(b);
       if (b.skip()) return;
 
-      SphereBlockScratch ttmp0(b);
       const Real w2 = (HYDROSTATIC) ? 0 : 0.25 * (state_w_i(b.e,data_n0,b.x,b.y,b.z) * state_w_i(b.e,data_n0,b.x,b.y,b.z) + state_w_i(b.e,data_n0,b.x,b.y,b.z+1) * state_w_i(b.e,data_n0,b.x,b.y,b.z+1));
       b.gradInit(ttmp0, w2);
 
-      SphereBlockScratch ttmp1(b);
       const Real exneriz = buffers_exner(b.e,b.x,b.y,b.z);
       b.gradInit(ttmp1, exneriz);
 
-      SphereBlockScratch ttmp2(b);
       const Real log_exneriz = (PGRAD_CORRECTION) ? log(exneriz) : 0;
       b.gradInit(ttmp2, log_exneriz);
 
       const Real v0 = state_v(b.e,data_n0,0,b.x,b.y,b.z);
       const Real v1 = state_v(b.e,data_n0,1,b.x,b.y,b.z);
 
-      SphereBlockScratch ttmp3(b);
-      SphereBlockScratch ttmp4(b);
       b.vortInit(ttmp3, ttmp4, v0, v1);
-
-      SphereBlockScratch ttmp5(b);
       b.gradInit(ttmp5, 0.5 * (v0 * v0 + v1 * v1));
 
       b.barrier();
