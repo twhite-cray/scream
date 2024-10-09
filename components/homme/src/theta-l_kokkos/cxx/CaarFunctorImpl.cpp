@@ -33,6 +33,13 @@ void CaarFunctorImpl::epoch1_blockOps()
       SphereBlockScratch ttmp0(b), ttmp1(b), ttmp2(b), ttmp3(b);
       if (b.skip()) return;
 
+#ifdef SPHERE_SINGLE
+      Real v0_[NP][NP], v1_[NP][NP], vtheta_[NP][NP];
+      for (int x = 0; x < NP; x++) {
+        for (int y = 0; y < NP; y++) {
+          b.update(x,y);
+#endif
+
       if (!HYDROSTATIC) {
 
         const Real dphi = state_phinh_i(b.e,data_n0,b.x,b.y,b.z+1) - state_phinh_i(b.e,data_n0,b.x,b.y,b.z);
@@ -62,7 +69,22 @@ void CaarFunctorImpl::epoch1_blockOps()
         b.gradInit(ttmp2, vtheta);
       }
 
+#ifdef SPHERE_SINGLE
+      v0_[y][x] = v0;
+      v1_[y][x] = v1;
+      vtheta_[y][x] = vtheta;
+        }
+      }
+#endif
       b.barrier();
+#ifdef SPHERE_SINGLE
+      for (int x = 0; x < NP; x++) {
+        for (int y = 0; y < NP; y++) {
+          b.update(x,y);
+          const Real v0 = v0_[y][x];
+          const Real v1 = v1_[y][x];
+          const Real vtheta = vtheta_[y][x];
+#endif
 
       const Real dvdp = b.div(ttmp0, ttmp1);
       buffers_dp_tens(b.e,b.x,b.y,b.z) = dvdp;
@@ -77,6 +99,10 @@ void CaarFunctorImpl::epoch1_blockOps()
         theta_tens += grad1 * v1;
         buffers_theta_tens(b.e,b.x,b.y,b.z) = theta_tens;
       }
+#ifdef SPHERE_SINGLE
+        }
+      }
+#endif
     });
 }
 
@@ -161,6 +187,12 @@ void CaarFunctorImpl::epoch3_blockOps()
       SphereBlockScratch tmp0(b);
       if (b.skip()) return;
 
+#ifdef SPHERE_SINGLE
+      for (int x = 0; x < NP; x++) {
+        for (int y = 0; y < NP; y++) {
+          b.update(x,y);
+#endif
+
       const Real pi = 0.5 * (buffers_dp_i(b.e,b.x,b.y,b.z) + buffers_dp_i(b.e,b.x,b.y,b.z+1));
       b.gradInit(tmp0, pi);
 
@@ -171,7 +203,16 @@ void CaarFunctorImpl::epoch3_blockOps()
         buffers_pnh(b.e,b.x,b.y,b.z) = EquationOfState::compute_dphi(state_vtheta_dp(b.e,data_n0,b.x,b.y,b.z), exner, pi);
       }
 
+#ifdef SPHERE_SINGLE 
+        }
+      }
+#endif
       b.barrier();
+#ifdef SPHERE_SINGLE
+      for (int x = 0; x < NP; x++) {
+        for (int y = 0; y < NP; y++) {
+          b.update(x,y);
+#endif
 
       Real grad0, grad1;
       b.grad(grad0, grad1, tmp0);
@@ -215,6 +256,10 @@ void CaarFunctorImpl::epoch3_blockOps()
         buffers_v_tens(b.e,0,b.x,b.y,b.z) = u;
         buffers_v_tens(b.e,1,b.x,b.y,b.z) = v;
       }
+#ifdef SPHERE_SINGLE
+        }
+      }
+#endif
     });
 }
 
@@ -390,6 +435,13 @@ void CaarFunctorImpl::epoch6_blockOps()
       SphereBlockScratch ttmp0(b), ttmp1(b), ttmp2(b), ttmp3(b), ttmp4(b), ttmp5(b);
       if (b.skip()) return;
 
+#ifdef SPHERE_SINGLE
+      Real exneriz_[NP][NP], v0_[NP][NP], v1_[NP][NP];
+      for (int x = 0; x < NP; x++) {
+        for (int y = 0; y < NP; y++) {
+          b.update(x,y);
+#endif
+
       const Real w2 = (HYDROSTATIC) ? 0 : 0.25 * (state_w_i(b.e,data_n0,b.x,b.y,b.z) * state_w_i(b.e,data_n0,b.x,b.y,b.z) + state_w_i(b.e,data_n0,b.x,b.y,b.z+1) * state_w_i(b.e,data_n0,b.x,b.y,b.z+1));
       b.gradInit(ttmp0, w2);
 
@@ -405,7 +457,22 @@ void CaarFunctorImpl::epoch6_blockOps()
       b.vortInit(ttmp3, ttmp4, v0, v1);
       b.gradInit(ttmp5, 0.5 * (v0 * v0 + v1 * v1));
 
+#ifdef SPHERE_SINGLE
+      exneriz_[y][x] = exneriz;
+      v0_[y][x] = v0;
+      v1_[y][x] = v1;
+        }
+      }
+#endif
       b.barrier();
+#ifdef SPHERE_SINGLE
+      for (int x = 0; x < NP; x++) {
+        for (int y = 0; y < NP; y++) {
+          b.update(x,y);
+          const Real exneriz = exneriz_[y][x];
+          const Real v0 = v0_[y][x];
+          const Real v1 = v1_[y][x];
+#endif
 
       Real grad_v0, grad_v1;
       b.grad(grad_v0, grad_v1, ttmp5);
@@ -464,6 +531,10 @@ void CaarFunctorImpl::epoch6_blockOps()
 
       buffers_v_tens(b.e,0,b.x,b.y,b.z) = u_tens;
       buffers_v_tens(b.e,1,b.x,b.y,b.z) = v_tens;
+#ifdef SPHERE_SINGLE
+        }
+      }
+#endif
     });
 }
 

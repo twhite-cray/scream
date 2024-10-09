@@ -1185,7 +1185,10 @@ using Team = TeamPolicy::member_type;
 
 static constexpr int NPNP = NP * NP;
 #undef SPHERE_SINGLE
-#if defined(KOKKOS_ENABLE_HIP)
+#ifdef SPHERE_SINGLE
+// For testing with KOKKOS_ENABLE_HIP/CUDA/SYCL
+static constexpr int WARP_SIZE = 1;
+#elif defined(KOKKOS_ENABLE_HIP)
 static constexpr int WARP_SIZE = warpSize;
 #elif defined(KOKKOS_ENABLE_CUDA) || defined(KOKKOS_ENABLE_SYCL)
 static constexpr int WARP_SIZE = 32;
@@ -1196,7 +1199,11 @@ static constexpr int WARP_SIZE = 1;
 
 static constexpr int SPHERE_BLOCK_LEV = WARP_SIZE;
 static constexpr int SPHERE_BLOCKS_PER_COL = (NUM_PHYSICAL_LEV - 1) / SPHERE_BLOCK_LEV + 1;
+#ifdef SPHERE_SINGLE
+static constexpr int SPHERE_BLOCK = 1;
+#else
 static constexpr int SPHERE_BLOCK = NPNP * SPHERE_BLOCK_LEV;
+#endif
 
 struct SphereGlobal {
 
@@ -1249,19 +1256,23 @@ struct SphereBlockOps {
   KOKKOS_INLINE_FUNCTION SphereBlockOps(const SphereGlobal &sg, const Team &team):
     g(sg),
     t(team),
-    scale_factor_inv(g.scale_factor_inv),
-    rrdmd(0)
+    scale_factor_inv(g.scale_factor_inv)
   {
     const int lr = t.league_rank();
     e = lr / SPHERE_BLOCKS_PER_COL;
     const int iw = lr % SPHERE_BLOCKS_PER_COL;
     const int tr = t.team_rank();
     const int ixy = tr / SPHERE_BLOCK_LEV;
-    x = ixy / NP;
-    y = ixy % NP;
     const int dz = tr % SPHERE_BLOCK_LEV;
     z = dz + iw * SPHERE_BLOCK_LEV;
+    update(ixy / NP, ixy % NP);
+  }
 
+  KOKKOS_INLINE_FUNCTION void update(const int ix, const int iy)
+  {
+    rrdmd = 0;
+    x = ix;
+    y = iy;
     metdet = g.metdet(e,x,y);
     for (int i = 0; i < 2; i++) for (int j = 0; j < 2; j++) dinv[i][j] = g.dinv(e,i,j,x,y);
     for (int j = 0; j < NP; j++) {
