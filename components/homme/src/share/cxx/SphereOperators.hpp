@@ -1184,25 +1184,30 @@ using TeamPolicy = Kokkos::TeamPolicy<ExecSpace>;
 using Team = TeamPolicy::member_type;
 
 static constexpr int NPNP = NP * NP;
-#undef SPHERE_SINGLE
-#ifdef SPHERE_SINGLE
+
 // For testing with KOKKOS_ENABLE_HIP/CUDA/SYCL
-static constexpr int WARP_SIZE = 1;
-#elif defined(KOKKOS_ENABLE_HIP)
-static constexpr int WARP_SIZE = warpSize;
+//#define WARP_SIZE 1
+
+#ifndef WARP_SIZE
+
+#if defined(KOKKOS_ENABLE_HIP)
+#define WARP_SIZE warpSize
 #elif defined(KOKKOS_ENABLE_CUDA) || defined(KOKKOS_ENABLE_SYCL)
-static constexpr int WARP_SIZE = 32;
+#define WARP_SIZE 32
 #else
-#define SPHERE_SINGLE
-static constexpr int WARP_SIZE = 1;
+#define WARP_SIZE 1
 #endif
 
-static constexpr int SPHERE_BLOCK_LEV = WARP_SIZE;
-static constexpr int SPHERE_BLOCKS_PER_COL = (NUM_PHYSICAL_LEV - 1) / SPHERE_BLOCK_LEV + 1;
-#ifdef SPHERE_SINGLE
+#endif
+
+#if (WARP_SIZE == 1)
+static constexpr int SPHERE_BLOCK_LEV = 1;
 static constexpr int SPHERE_BLOCK = 1;
+static constexpr int SPHERE_BLOCKS_PER_COL = NUM_PHYSICAL_LEV;
 #else
+static constexpr int SPHERE_BLOCK_LEV = WARP_SIZE;
 static constexpr int SPHERE_BLOCK = NPNP * SPHERE_BLOCK_LEV;
+static constexpr int SPHERE_BLOCKS_PER_COL = (NUM_PHYSICAL_LEV - 1) / SPHERE_BLOCK_LEV + 1;
 #endif
 
 struct SphereGlobal {
@@ -1375,7 +1380,7 @@ struct SphereCol {
   template <typename F>
   KOKKOS_INLINE_FUNCTION void parallel_for(const int num_lev, F f)
   {
-#ifdef SPHERE_SINGLE
+#if (WARP_SIZE == 1)
     for (z = 0; z < num_lev; z++) f();
 #else
     f();
@@ -1384,7 +1389,7 @@ struct SphereCol {
 
   static TeamPolicy policy(const int num_elems, const int num_lev)
   {
-#ifdef SPHERE_SINGLE
+#if (WARP_SIZE == 1)
     return TeamPolicy(num_elems * NPNP, 1);
 #else
     return TeamPolicy(num_elems * NPNP, num_lev);
@@ -1432,8 +1437,14 @@ struct SphereScanOps {
   KOKKOS_INLINE_FUNCTION SphereScanOps(const Team &team):
     t(team)
   {
-    e = t.league_rank();
+#if (WARP_SIZE == 1)
+    const int lr = t.league_rank() / NPNP;
+    const int tr = t.league_rank() % NPNP;
+#else
+    const int lr = t.league_rank();
     const int tr = t.team_rank();
+#endif
+    e = lr;
     x = tr / NP;
     y = tr % NP;
   }
@@ -1477,7 +1488,11 @@ struct SphereScanOps {
 
   static TeamPolicy policy(const int num_elems)
   {
+#if (WARP_SIZE == 1)
+    return TeamPolicy(num_elems * NPNP, 1, 1);
+#else
     return TeamPolicy(num_elems, NPNP, WARP_SIZE);
+#endif
   }
 };
 

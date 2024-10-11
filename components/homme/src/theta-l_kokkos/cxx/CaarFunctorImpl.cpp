@@ -33,7 +33,7 @@ void CaarFunctorImpl::epoch1_blockOps()
       SphereBlockScratch ttmp0(b), ttmp1(b), ttmp2(b), ttmp3(b);
       if (b.skip()) return;
 
-#ifdef SPHERE_SINGLE
+#if (WARP_SIZE == 1)
       Real v0_[NP][NP], v1_[NP][NP], vtheta_[NP][NP];
       for (int x = 0; x < NP; x++) {
         for (int y = 0; y < NP; y++) {
@@ -69,7 +69,7 @@ void CaarFunctorImpl::epoch1_blockOps()
         b.gradInit(ttmp2, vtheta);
       }
 
-#ifdef SPHERE_SINGLE
+#if (WARP_SIZE == 1)
       v0_[y][x] = v0;
       v1_[y][x] = v1;
       vtheta_[y][x] = vtheta;
@@ -77,7 +77,7 @@ void CaarFunctorImpl::epoch1_blockOps()
       }
 #endif
       b.barrier();
-#ifdef SPHERE_SINGLE
+#if (WARP_SIZE == 1)
       for (int x = 0; x < NP; x++) {
         for (int y = 0; y < NP; y++) {
           b.update(x,y);
@@ -99,7 +99,7 @@ void CaarFunctorImpl::epoch1_blockOps()
         theta_tens += grad1 * v1;
         buffers_theta_tens(b.e,b.x,b.y,b.z) = theta_tens;
       }
-#ifdef SPHERE_SINGLE
+#if (WARP_SIZE == 1)
         }
       }
 #endif
@@ -187,7 +187,7 @@ void CaarFunctorImpl::epoch3_blockOps()
       SphereBlockScratch tmp0(b);
       if (b.skip()) return;
 
-#ifdef SPHERE_SINGLE
+#if (WARP_SIZE == 1)
       for (int x = 0; x < NP; x++) {
         for (int y = 0; y < NP; y++) {
           b.update(x,y);
@@ -203,12 +203,12 @@ void CaarFunctorImpl::epoch3_blockOps()
         buffers_pnh(b.e,b.x,b.y,b.z) = EquationOfState::compute_dphi(state_vtheta_dp(b.e,data_n0,b.x,b.y,b.z), exner, pi);
       }
 
-#ifdef SPHERE_SINGLE 
+#if (WARP_SIZE == 1) 
         }
       }
 #endif
       b.barrier();
-#ifdef SPHERE_SINGLE
+#if (WARP_SIZE == 1)
       for (int x = 0; x < NP; x++) {
         for (int y = 0; y < NP; y++) {
           b.update(x,y);
@@ -256,7 +256,7 @@ void CaarFunctorImpl::epoch3_blockOps()
         buffers_v_tens(b.e,0,b.x,b.y,b.z) = u;
         buffers_v_tens(b.e,1,b.x,b.y,b.z) = v;
       }
-#ifdef SPHERE_SINGLE
+#if (WARP_SIZE == 1)
         }
       }
 #endif
@@ -435,7 +435,7 @@ void CaarFunctorImpl::epoch6_blockOps()
       SphereBlockScratch ttmp0(b), ttmp1(b), ttmp2(b), ttmp3(b), ttmp4(b), ttmp5(b);
       if (b.skip()) return;
 
-#ifdef SPHERE_SINGLE
+#if (WARP_SIZE == 1)
       Real exneriz_[NP][NP], v0_[NP][NP], v1_[NP][NP];
       for (int x = 0; x < NP; x++) {
         for (int y = 0; y < NP; y++) {
@@ -457,7 +457,7 @@ void CaarFunctorImpl::epoch6_blockOps()
       b.vortInit(ttmp3, ttmp4, v0, v1);
       b.gradInit(ttmp5, 0.5 * (v0 * v0 + v1 * v1));
 
-#ifdef SPHERE_SINGLE
+#if (WARP_SIZE == 1)
       exneriz_[y][x] = exneriz;
       v0_[y][x] = v0;
       v1_[y][x] = v1;
@@ -465,7 +465,7 @@ void CaarFunctorImpl::epoch6_blockOps()
       }
 #endif
       b.barrier();
-#ifdef SPHERE_SINGLE
+#if (WARP_SIZE == 1)
       for (int x = 0; x < NP; x++) {
         for (int y = 0; y < NP; y++) {
           b.update(x,y);
@@ -531,7 +531,7 @@ void CaarFunctorImpl::epoch6_blockOps()
 
       buffers_v_tens(b.e,0,b.x,b.y,b.z) = u_tens;
       buffers_v_tens(b.e,1,b.x,b.y,b.z) = v_tens;
-#ifdef SPHERE_SINGLE
+#if (WARP_SIZE == 1)
         }
       }
 #endif
