@@ -1205,6 +1205,9 @@ static constexpr int SPHERE_BLOCK_LEV = 1;
 static constexpr int SPHERE_BLOCK = 1;
 static constexpr int SPHERE_BLOCKS_PER_COL = NUM_PHYSICAL_LEV;
 #else
+#define SPHERE_BLOCK_OPS_LOAD(X)
+#define SPHERE_BLOCK_OPS_REAL(X) Real X;
+#define SPHERE_BLOCK_OPS_STORE(X)
 static constexpr int SPHERE_BLOCK_LEV = WARP_SIZE;
 static constexpr int SPHERE_BLOCK = NPNP * SPHERE_BLOCK_LEV;
 static constexpr int SPHERE_BLOCKS_PER_COL = (NUM_PHYSICAL_LEV - 1) / SPHERE_BLOCK_LEV + 1;
@@ -1227,19 +1230,23 @@ struct SphereGlobal {
   {}
 };
 
+struct SphereBlockOps;
+
 using SphereBlockScratchView = Kokkos::View<
   Real[SPHERE_BLOCK_LEV][NP][NP],
   ExecSpace::scratch_memory_space,
   Kokkos::MemoryTraits<Kokkos::Unmanaged>
   >;
 
+#if (WARP_SIZE == 1)
+
+#else
 using SphereBlockScratchSubview = Kokkos::Subview<
   SphereBlockScratchView, int,
   std::remove_const_t<decltype(Kokkos::ALL)>,
   std::remove_const_t<decltype(Kokkos::ALL)>
   >;
-
-struct SphereBlockOps;
+#endif
 
 struct SphereBlockScratch {
   SphereBlockScratchView v;
@@ -1288,7 +1295,9 @@ struct SphereBlockOps {
 
   KOKKOS_INLINE_FUNCTION void barrier() const
   {
+#if (WARP_SIZE != 1)
     t.team_barrier();
+#endif
   }
 
   KOKKOS_INLINE_FUNCTION Real div(const SphereBlockScratch &t0, const SphereBlockScratch &t1)
@@ -1327,6 +1336,15 @@ struct SphereBlockOps {
   KOKKOS_INLINE_FUNCTION void gradInit(SphereBlockScratch &t0, const Real v0)
   {
     t0.sv(x,y) = v0;
+  }
+
+  template <typename F>
+  KOKKOS_INLINE_FUNCTION void parallel_for(F f)
+  {
+#if (WARP_SIZE == 1)
+#else
+    f();
+#endif
   }
 
   KOKKOS_INLINE_FUNCTION bool skip() const { return (z >= NUM_PHYSICAL_LEV); }
