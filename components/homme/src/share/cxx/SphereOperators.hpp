@@ -1489,7 +1489,7 @@ struct SphereScanOps {
   static TeamPolicy policy(const int num_elems)
   {
 #if (WARP_SIZE == 1)
-    return TeamPolicy(num_elems * NPNP, 1, 1);
+    return TeamPolicy(num_elems * NPNP, 1, NUM_PHYSICAL_LEV);
 #else
     return TeamPolicy(num_elems, NPNP, WARP_SIZE);
 #endif
