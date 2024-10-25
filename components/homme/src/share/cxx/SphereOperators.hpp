@@ -1199,6 +1199,34 @@ static constexpr int NPNP = NP * NP;
 
 #if (WARP_SIZE == 1)
 
+#define SPHERE_BLOCK_START(B,X,Y,Z) \
+  Real X; Real sbo##X[NP][NP][NUM_PHYSICAL_LEV]; \
+  Real Y; Real sbo##Y[NP][NP][NUM_PHYSICAL_LEV]; \
+  Real Z; Real sbo##Z[NP][NP][NUM_PHYSICAL_LEV]; \
+  for (int ix = 0; ix < NP; ix++) for(int iy = 0; iy < NP; iy++) { \
+    B.update(ix,iy); \
+    Kokkos::parallel_for( \
+        Kokkos::ThreadVectorRange(B.t, 1, NUM_PHYSICAL_LEV), \
+        [&](const int z_) { \
+          B.z = z_;
+
+#define SPHERE_BLOCK_MIDDLE(B,X,Y,Z) \
+    sbo##X[B.x][B.y][B.z] = X; \
+    sbo##Y[B.x][B.y][B.z] = Y; \
+    sbo##Z[B.x][B.y][B.z] = Z; \
+  } \
+  for (int ix = 0; ix < NP; ix++) for(int iy = 0; iy < NP; iy++) { \
+    B.update(ix,iy); \
+    Kokkos::parallel_for( \
+        Kokkos::ThreadVectorRange(B.t, 1, NUM_PHYSICAL_LEV), \
+        [&](const int z) { \
+          B.z = z; \
+          X = sbo##X[B.x][B.y][B.z]; \
+          Y = sbo##Y[B.x][B.y][B.z]; \
+          Z = sbo##Z[B.x][B.y][B.z]; 
+
+#define SPHERE_BLOCK_END() }
+
 #define SPHERE_BLOCK_OPS_LOAD(B,X) X = sbo##X[B.x][B.y][B.z];
 #define SPHERE_BLOCK_OPS_REAL(X) Real X; Real sbo##X[NP][NP][NUM_PHYSICAL_LEV];
 #define SPHERE_BLOCK_OPS_STORE(B,X) sbo##X[B.x][B.y][B.z] = X;
@@ -1207,6 +1235,12 @@ static constexpr int SPHERE_BLOCK = 1;
 static constexpr int SPHERE_BLOCKS_PER_COL = 1;
 
 #else
+
+#define SPHERE_BLOCK_START(B,X,Y,Z) Real X, Y, Z;
+
+#define SPHERE_BLOCK_MIDDLE(B,X,Y,Z) B.barrier();
+
+#define SPHERE_BLOCK_END()
 
 #define SPHERE_BLOCK_OPS_LOAD(B,X)
 #define SPHERE_BLOCK_OPS_REAL(X) Real X;
