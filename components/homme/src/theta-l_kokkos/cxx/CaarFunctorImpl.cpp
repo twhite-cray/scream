@@ -68,17 +68,17 @@ void CaarFunctorImpl::epoch1_blockOps()
           b.gradInit(ttmp2, vtheta);
         }
 
-        SPHERE_BLOCK_OPS_STORE(v0);
-        SPHERE_BLOCK_OPS_STORE(v1);
-        SPHERE_BLOCK_OPS_STORE(vtheta);
+        SPHERE_BLOCK_OPS_STORE(b,v0);
+        SPHERE_BLOCK_OPS_STORE(b,v1);
+        SPHERE_BLOCK_OPS_STORE(b,vtheta);
       });
 
       b.barrier();
 
       b.parallel_for([&]{
-        SPHERE_BLOCK_OPS_LOAD(v0);
-        SPHERE_BLOCK_OPS_LOAD(v1);
-        SPHERE_BLOCK_OPS_LOAD(vtheta);
+        SPHERE_BLOCK_OPS_LOAD(b,v0);
+        SPHERE_BLOCK_OPS_LOAD(b,v1);
+        SPHERE_BLOCK_OPS_LOAD(b,vtheta);
 
         const Real dvdp = b.div(ttmp0, ttmp1);
         buffers_dp_tens(b.e,b.x,b.y,b.z) = dvdp;
@@ -432,15 +432,15 @@ void CaarFunctorImpl::epoch6_blockOps()
         b.vortInit(ttmp3, ttmp4, v0, v1);
         b.gradInit(ttmp5, 0.5 * (v0 * v0 + v1 * v1));
 
-        SPHERE_BLOCK_OPS_STORE(exneriz);
-        SPHERE_BLOCK_OPS_STORE(v0);
-        SPHERE_BLOCK_OPS_STORE(v1);
+        SPHERE_BLOCK_OPS_STORE(b,exneriz);
+        SPHERE_BLOCK_OPS_STORE(b,v0);
+        SPHERE_BLOCK_OPS_STORE(b,v1);
       });
       b.barrier();
       b.parallel_for([&]{
-        SPHERE_BLOCK_OPS_LOAD(exneriz);
-        SPHERE_BLOCK_OPS_LOAD(v0);
-        SPHERE_BLOCK_OPS_LOAD(v1);
+        SPHERE_BLOCK_OPS_LOAD(b,exneriz);
+        SPHERE_BLOCK_OPS_LOAD(b,v0);
+        SPHERE_BLOCK_OPS_LOAD(b,v1);
 
         Real grad_v0, grad_v1;
         b.grad(grad_v0, grad_v1, ttmp5);

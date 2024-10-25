@@ -1185,9 +1185,6 @@ using Team = TeamPolicy::member_type;
 
 static constexpr int NPNP = NP * NP;
 
-// For testing with KOKKOS_ENABLE_HIP/CUDA/SYCL
-//#define WARP_SIZE 1
-
 #ifndef WARP_SIZE
 
 #if defined(KOKKOS_ENABLE_HIP)
@@ -1201,16 +1198,23 @@ static constexpr int NPNP = NP * NP;
 #endif
 
 #if (WARP_SIZE == 1)
+
+#define SPHERE_BLOCK_OPS_LOAD(B,X) X = sbo##X[B.x][B.y][B.z];
+#define SPHERE_BLOCK_OPS_REAL(X) Real X; Real sbo##X[NP][NP][NUM_PHYSICAL_LEV];
+#define SPHERE_BLOCK_OPS_STORE(B,X) sbo##X[B.x][B.y][B.z] = X;
 static constexpr int SPHERE_BLOCK_LEV = 1;
 static constexpr int SPHERE_BLOCK = 1;
-static constexpr int SPHERE_BLOCKS_PER_COL = NUM_PHYSICAL_LEV;
+static constexpr int SPHERE_BLOCKS_PER_COL = 1;
+
 #else
-#define SPHERE_BLOCK_OPS_LOAD(X)
+
+#define SPHERE_BLOCK_OPS_LOAD(B,X)
 #define SPHERE_BLOCK_OPS_REAL(X) Real X;
-#define SPHERE_BLOCK_OPS_STORE(X)
+#define SPHERE_BLOCK_OPS_STORE(B,X)
 static constexpr int SPHERE_BLOCK_LEV = WARP_SIZE;
 static constexpr int SPHERE_BLOCK = NPNP * SPHERE_BLOCK_LEV;
 static constexpr int SPHERE_BLOCKS_PER_COL = (NUM_PHYSICAL_LEV - 1) / SPHERE_BLOCK_LEV + 1;
+
 #endif
 
 struct SphereGlobal {
@@ -1232,27 +1236,37 @@ struct SphereGlobal {
 
 struct SphereBlockOps;
 
+#if (WARP_SIZE == 1)
+
+struct SphereBlockScratch {
+  const SphereBlockOps &b;
+  Real v[NP][NP][NUM_PHYSICAL_LEV];
+  KOKKOS_INLINE_FUNCTION SphereBlockScratch(const SphereBlockOps &);
+  KOKKOS_INLINE_FUNCTION const Real &sv(int x, int y) const;
+  KOKKOS_INLINE_FUNCTION Real &sv(int x, int y);
+};
+
+#else
+
 using SphereBlockScratchView = Kokkos::View<
   Real[SPHERE_BLOCK_LEV][NP][NP],
   ExecSpace::scratch_memory_space,
   Kokkos::MemoryTraits<Kokkos::Unmanaged>
   >;
 
-#if (WARP_SIZE == 1)
-
-#else
 using SphereBlockScratchSubview = Kokkos::Subview<
   SphereBlockScratchView, int,
   std::remove_const_t<decltype(Kokkos::ALL)>,
   std::remove_const_t<decltype(Kokkos::ALL)>
   >;
-#endif
 
 struct SphereBlockScratch {
   SphereBlockScratchView v;
   SphereBlockScratchSubview sv;
   KOKKOS_INLINE_FUNCTION SphereBlockScratch(const SphereBlockOps &b);
 };
+
+#endif
 
 struct SphereBlockOps {
   const SphereGlobal &g;
@@ -1342,6 +1356,15 @@ struct SphereBlockOps {
   KOKKOS_INLINE_FUNCTION void parallel_for(F f)
   {
 #if (WARP_SIZE == 1)
+    for (int ix = 0; ix < NP; ix++) for(int iy = 0; iy < NP; iy++) {
+      update(ix,iy);
+      Kokkos::parallel_for(
+        Kokkos::ThreadVectorRange(t, 1, NUM_PHYSICAL_LEV),
+        [&](const int z_) {
+          z = z_;
+          f();
+        });
+    }
 #else
     f();
 #endif
@@ -1369,16 +1392,36 @@ struct SphereBlockOps {
 
   static TeamPolicy policy(const int num_elems, const int num_scratch)
   {
+#if (WARP_SIZE == 1)
+    return TeamPolicy(num_elems * NPNP, 1, NUM_PHYSICAL_LEV);
+#else
     return TeamPolicy(num_elems * SPHERE_BLOCKS_PER_COL, SPHERE_BLOCK).
       set_scratch_size(0, Kokkos::PerTeam(num_scratch * SphereBlockScratchView::shmem_size()));
+#endif
   }
 
 };
+
+#if (WARP_SIZE == 1)
+
+KOKKOS_INLINE_FUNCTION SphereBlockScratch::SphereBlockScratch(const SphereBlockOps &b):
+  b(b)
+{}
+
+KOKKOS_INLINE_FUNCTION const Real &SphereBlockScratch::sv(const int x, const int y) const
+{ return v[x][y][b.z]; }
+
+KOKKOS_INLINE_FUNCTION Real &SphereBlockScratch::sv(const int x, const int y)
+{ return v[x][y][b.z]; }
+
+#else
 
 KOKKOS_INLINE_FUNCTION SphereBlockScratch::SphereBlockScratch(const SphereBlockOps &b):
   v(b.t.team_scratch(0)),
   sv(Kokkos::subview(v, b.z % SPHERE_BLOCK_LEV, Kokkos::ALL, Kokkos::ALL))
 {}
+
+#endif
 
 struct SphereCol {
   const Team &t;
@@ -1399,7 +1442,12 @@ struct SphereCol {
   KOKKOS_INLINE_FUNCTION void parallel_for(const int num_lev, F f)
   {
 #if (WARP_SIZE == 1)
-    for (z = 0; z < num_lev; z++) f();
+    Kokkos::parallel_for(
+      Kokkos::ThreadVectorRange(t, 1, num_lev),
+        [&](const int z_) {
+          z = z_;
+          f();
+        });
 #else
     f();
 #endif
@@ -1408,7 +1456,7 @@ struct SphereCol {
   static TeamPolicy policy(const int num_elems, const int num_lev)
   {
 #if (WARP_SIZE == 1)
-    return TeamPolicy(num_elems * NPNP, 1);
+    return TeamPolicy(num_elems * NPNP, 1, num_lev);
 #else
     return TeamPolicy(num_elems * NPNP, num_lev);
 #endif
