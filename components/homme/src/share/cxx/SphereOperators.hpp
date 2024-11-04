@@ -1199,7 +1199,7 @@ static constexpr int NPNP = NP * NP;
 
 #if (WARP_SIZE == 1)
 
-#define SPHERE_BLOCK_START(B,X,Y,Z) \
+#define SPHERE_BLOCK_START3(B,X,Y,Z) \
   Real X; Real sbo##X[NP][NP][NUM_PHYSICAL_LEV]; \
   Real Y; Real sbo##Y[NP][NP][NUM_PHYSICAL_LEV]; \
   Real Z; Real sbo##Z[NP][NP][NUM_PHYSICAL_LEV]; \
@@ -1210,10 +1210,19 @@ static constexpr int NPNP = NP * NP;
         [&](const int z_) { \
           B.z = z_;
 
-#define SPHERE_BLOCK_MIDDLE(B,X,Y,Z) \
-    sbo##X[B.x][B.y][B.z] = X; \
-    sbo##Y[B.x][B.y][B.z] = Y; \
-    sbo##Z[B.x][B.y][B.z] = Z; \
+#define SPHERE_BLOCK_START0(B) \
+  for (int ix = 0; ix < NP; ix++) for(int iy = 0; iy < NP; iy++) { \
+    B.update(ix,iy); \
+    Kokkos::parallel_for( \
+        Kokkos::ThreadVectorRange(B.t, 1, NUM_PHYSICAL_LEV), \
+        [&](const int z_) { \
+          B.z = z_;
+
+#define SPHERE_BLOCK_MIDDLE3(B,X,Y,Z) \
+          sbo##X[B.x][B.y][B.z] = X; \
+          sbo##Y[B.x][B.y][B.z] = Y; \
+          sbo##Z[B.x][B.y][B.z] = Z; \
+        });\
   } \
   for (int ix = 0; ix < NP; ix++) for(int iy = 0; iy < NP; iy++) { \
     B.update(ix,iy); \
@@ -1225,26 +1234,32 @@ static constexpr int NPNP = NP * NP;
           Y = sbo##Y[B.x][B.y][B.z]; \
           Z = sbo##Z[B.x][B.y][B.z]; 
 
-#define SPHERE_BLOCK_END() }
+#define SPHERE_BLOCK_MIDDLE0(B) \
+        });\
+  } \
+  for (int ix = 0; ix < NP; ix++) for(int iy = 0; iy < NP; iy++) { \
+    B.update(ix,iy); \
+    Kokkos::parallel_for( \
+        Kokkos::ThreadVectorRange(B.t, 1, NUM_PHYSICAL_LEV), \
+        [&](const int z) { \
+          B.z = z;
 
-#define SPHERE_BLOCK_OPS_LOAD(B,X) X = sbo##X[B.x][B.y][B.z];
-#define SPHERE_BLOCK_OPS_REAL(X) Real X; Real sbo##X[NP][NP][NUM_PHYSICAL_LEV];
-#define SPHERE_BLOCK_OPS_STORE(B,X) sbo##X[B.x][B.y][B.z] = X;
+#define SPHERE_BLOCK_END() }); }
+
 static constexpr int SPHERE_BLOCK_LEV = 1;
 static constexpr int SPHERE_BLOCK = 1;
 static constexpr int SPHERE_BLOCKS_PER_COL = 1;
 
 #else
 
-#define SPHERE_BLOCK_START(B,X,Y,Z) Real X, Y, Z;
+#define SPHERE_BLOCK_START3(B,X,Y,Z) Real X, Y, Z;
+#define SPHERE_BLOCK_START0(B)
 
-#define SPHERE_BLOCK_MIDDLE(B,X,Y,Z) B.barrier();
+#define SPHERE_BLOCK_MIDDLE3(B,X,Y,Z) B.barrier();
+#define SPHERE_BLOCK_MIDDLE0(B) B.barrier();
 
 #define SPHERE_BLOCK_END()
 
-#define SPHERE_BLOCK_OPS_LOAD(B,X)
-#define SPHERE_BLOCK_OPS_REAL(X) Real X;
-#define SPHERE_BLOCK_OPS_STORE(B,X)
 static constexpr int SPHERE_BLOCK_LEV = WARP_SIZE;
 static constexpr int SPHERE_BLOCK = NPNP * SPHERE_BLOCK_LEV;
 static constexpr int SPHERE_BLOCKS_PER_COL = (NUM_PHYSICAL_LEV - 1) / SPHERE_BLOCK_LEV + 1;
@@ -1318,6 +1333,10 @@ struct SphereBlockOps {
     t(team),
     scale_factor_inv(g.scale_factor_inv)
   {
+#if (WARP_SIZE == 1)
+    e = t.league_rank();
+    x = y = z = 0;
+#else
     const int lr = t.league_rank();
     e = lr / SPHERE_BLOCKS_PER_COL;
     const int iw = lr % SPHERE_BLOCKS_PER_COL;
@@ -1326,6 +1345,7 @@ struct SphereBlockOps {
     const int dz = tr % SPHERE_BLOCK_LEV;
     z = dz + iw * SPHERE_BLOCK_LEV;
     update(ixy / NP, ixy % NP);
+#endif
   }
 
   KOKKOS_INLINE_FUNCTION void update(const int ix, const int iy)
@@ -1343,9 +1363,7 @@ struct SphereBlockOps {
 
   KOKKOS_INLINE_FUNCTION void barrier() const
   {
-#if (WARP_SIZE != 1)
     t.team_barrier();
-#endif
   }
 
   KOKKOS_INLINE_FUNCTION Real div(const SphereBlockScratch &t0, const SphereBlockScratch &t1)
@@ -1386,24 +1404,6 @@ struct SphereBlockOps {
     t0.sv(x,y) = v0;
   }
 
-  template <typename F>
-  KOKKOS_INLINE_FUNCTION void parallel_for(F f)
-  {
-#if (WARP_SIZE == 1)
-    for (int ix = 0; ix < NP; ix++) for(int iy = 0; iy < NP; iy++) {
-      update(ix,iy);
-      Kokkos::parallel_for(
-        Kokkos::ThreadVectorRange(t, 1, NUM_PHYSICAL_LEV),
-        [&](const int z_) {
-          z = z_;
-          f();
-        });
-    }
-#else
-    f();
-#endif
-  }
-
   KOKKOS_INLINE_FUNCTION bool skip() const { return (z >= NUM_PHYSICAL_LEV); }
 
   KOKKOS_INLINE_FUNCTION Real vort(const SphereBlockScratch &t0, const SphereBlockScratch &t1)
@@ -1427,7 +1427,7 @@ struct SphereBlockOps {
   static TeamPolicy policy(const int num_elems, const int num_scratch)
   {
 #if (WARP_SIZE == 1)
-    return TeamPolicy(num_elems * NPNP, 1, NUM_PHYSICAL_LEV);
+    return TeamPolicy(num_elems, 1, NUM_PHYSICAL_LEV);
 #else
     return TeamPolicy(num_elems * SPHERE_BLOCKS_PER_COL, SPHERE_BLOCK).
       set_scratch_size(0, Kokkos::PerTeam(num_scratch * SphereBlockScratchView::shmem_size()));

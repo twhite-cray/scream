@@ -33,7 +33,7 @@ void CaarFunctorImpl::epoch1_blockOps()
       SphereBlockScratch ttmp0(b), ttmp1(b), ttmp2(b), ttmp3(b);
       if (b.skip()) return;
 
-      SPHERE_BLOCK_START(b, v0, v1, vtheta);
+      SPHERE_BLOCK_START3(b, v0, v1, vtheta);
 
       if (!HYDROSTATIC) {
 
@@ -64,7 +64,7 @@ void CaarFunctorImpl::epoch1_blockOps()
         b.gradInit(ttmp2, vtheta);
       }
 
-      SPHERE_BLOCK_MIDDLE(b, v0, v1, vtheta);
+      SPHERE_BLOCK_MIDDLE3(b, v0, v1, vtheta);
 
       const Real dvdp = b.div(ttmp0, ttmp1);
       buffers_dp_tens(b.e,b.x,b.y,b.z) = dvdp;
@@ -165,65 +165,63 @@ void CaarFunctorImpl::epoch3_blockOps()
       SphereBlockScratch tmp0(b);
       if (b.skip()) return;
 
-      b.parallel_for([&]{
+      SPHERE_BLOCK_START0(b);
 
-        const Real pi = 0.5 * (buffers_dp_i(b.e,b.x,b.y,b.z) + buffers_dp_i(b.e,b.x,b.y,b.z+1));
-        b.gradInit(tmp0, pi);
+      const Real pi = 0.5 * (buffers_dp_i(b.e,b.x,b.y,b.z) + buffers_dp_i(b.e,b.x,b.y,b.z+1));
+      b.gradInit(tmp0, pi);
 
-        if (HYDROSTATIC) {
-          Real exner = pi;
-          EquationOfState::pressure_to_exner(exner);
-          buffers_exner(b.e,b.x,b.y,b.z) = exner;
-          buffers_pnh(b.e,b.x,b.y,b.z) = EquationOfState::compute_dphi(state_vtheta_dp(b.e,data_n0,b.x,b.y,b.z), exner, pi);
+      if (HYDROSTATIC) {
+        Real exner = pi;
+        EquationOfState::pressure_to_exner(exner);
+        buffers_exner(b.e,b.x,b.y,b.z) = exner;
+        buffers_pnh(b.e,b.x,b.y,b.z) = EquationOfState::compute_dphi(state_vtheta_dp(b.e,data_n0,b.x,b.y,b.z), exner, pi);
+      }
+
+      SPHERE_BLOCK_MIDDLE0(b);
+
+      Real grad0, grad1;
+      b.grad(grad0, grad1, tmp0);
+
+      Real omega = -0.5 * (buffers_w_tens(b.e,b.x,b.y,b.z) + buffers_w_tens(b.e,b.x,b.y,b.z+1));
+      const Real uz = state_v(b.e,data_n0,0,b.x,b.y,b.z);
+      const Real vz = state_v(b.e,data_n0,1,b.x,b.y,b.z);
+      omega += uz * grad0 + vz * grad1;
+      buffers_omega_p(b.e,b.x,b.y,b.z) = omega;
+
+      derived_omega_p(b.e,b.x,b.y,b.z) += data_eta_ave_w * omega;
+
+      if (RSPLIT_ZERO) {
+
+        const Real dp = state_dp3d(b.e,data_n0,b.x,b.y,b.z);
+        const Real etap = buffers_eta_dot_dpdn(b.e,b.x,b.y,b.z+1);
+        const Real etaz = buffers_eta_dot_dpdn(b.e,b.x,b.y,b.z);
+
+        buffers_dp_tens(b.e,b.x,b.y,b.z) += etap - etaz;
+
+        derived_eta_dot_dpdn(b.e,b.x,b.y,b.z) += data_eta_ave_w * etaz;
+
+        if (!HYDROSTATIC) {
+          const Real dw = state_w_i(b.e,data_n0,b.x,b.y,b.z+1) - state_w_i(b.e,data_n0,b.x,b.y,b.z);
+          const Real eta = 0.5 * (etaz + etap);
+          buffers_temp(b.e,b.x,b.y,b.z) = dw * eta;
         }
 
-      });
-      b.barrier();
-      b.parallel_for([&]{
-
-        Real grad0, grad1;
-        b.grad(grad0, grad1, tmp0);
-
-        Real omega = -0.5 * (buffers_w_tens(b.e,b.x,b.y,b.z) + buffers_w_tens(b.e,b.x,b.y,b.z+1));
-        const Real uz = state_v(b.e,data_n0,0,b.x,b.y,b.z);
-        const Real vz = state_v(b.e,data_n0,1,b.x,b.y,b.z);
-        omega += uz * grad0 + vz * grad1;
-        buffers_omega_p(b.e,b.x,b.y,b.z) = omega;
-
-        derived_omega_p(b.e,b.x,b.y,b.z) += data_eta_ave_w * omega;
-
-        if (RSPLIT_ZERO) {
-
-          const Real dp = state_dp3d(b.e,data_n0,b.x,b.y,b.z);
-          const Real etap = buffers_eta_dot_dpdn(b.e,b.x,b.y,b.z+1);
-          const Real etaz = buffers_eta_dot_dpdn(b.e,b.x,b.y,b.z);
-
-          buffers_dp_tens(b.e,b.x,b.y,b.z) += etap - etaz;
-
-          derived_eta_dot_dpdn(b.e,b.x,b.y,b.z) += data_eta_ave_w * etaz;
-
-          if (!HYDROSTATIC) {
-            const Real dw = state_w_i(b.e,data_n0,b.x,b.y,b.z+1) - state_w_i(b.e,data_n0,b.x,b.y,b.z);
-            const Real eta = 0.5 * (etaz + etap);
-            buffers_temp(b.e,b.x,b.y,b.z) = dw * eta;
-          }
-
-          Real u = 0;
-          Real v = 0;
-          if (b.z < NUM_PHYSICAL_LEV-1) {
-            const Real facp = 0.5 * etap / dp;
-            u = facp * (state_v(b.e,data_n0,0,b.x,b.y,b.z+1) - uz);
-            v = facp * (state_v(b.e,data_n0,1,b.x,b.y,b.z+1) - vz);
-          }
-          if (b.z > 0) {
-            const Real facm = 0.5 * etaz / dp;
-            u += facm * (uz - state_v(b.e,data_n0,0,b.x,b.y,b.z-1));
-            v += facm * (vz - state_v(b.e,data_n0,1,b.x,b.y,b.z-1));
-          }
-          buffers_v_tens(b.e,0,b.x,b.y,b.z) = u;
-          buffers_v_tens(b.e,1,b.x,b.y,b.z) = v;
+        Real u = 0;
+        Real v = 0;
+        if (b.z < NUM_PHYSICAL_LEV-1) {
+          const Real facp = 0.5 * etap / dp;
+          u = facp * (state_v(b.e,data_n0,0,b.x,b.y,b.z+1) - uz);
+          v = facp * (state_v(b.e,data_n0,1,b.x,b.y,b.z+1) - vz);
         }
-      });
+        if (b.z > 0) {
+          const Real facm = 0.5 * etaz / dp;
+          u += facm * (uz - state_v(b.e,data_n0,0,b.x,b.y,b.z-1));
+          v += facm * (vz - state_v(b.e,data_n0,1,b.x,b.y,b.z-1));
+        }
+        buffers_v_tens(b.e,0,b.x,b.y,b.z) = u;
+        buffers_v_tens(b.e,1,b.x,b.y,b.z) = v;
+      }
+      SPHERE_BLOCK_END();
     });
 }
 
@@ -399,7 +397,7 @@ void CaarFunctorImpl::epoch6_blockOps()
       SphereBlockScratch ttmp0(b), ttmp1(b), ttmp2(b), ttmp3(b), ttmp4(b), ttmp5(b);
       if (b.skip()) return;
 
-      SPHERE_BLOCK_START(b, exneriz, v0, v1);
+      SPHERE_BLOCK_START3(b, exneriz, v0, v1);
 
       const Real w2 = (HYDROSTATIC) ? 0 : 0.25 * (state_w_i(b.e,data_n0,b.x,b.y,b.z) * state_w_i(b.e,data_n0,b.x,b.y,b.z) + state_w_i(b.e,data_n0,b.x,b.y,b.z+1) * state_w_i(b.e,data_n0,b.x,b.y,b.z+1));
       b.gradInit(ttmp0, w2);
@@ -416,7 +414,7 @@ void CaarFunctorImpl::epoch6_blockOps()
       b.vortInit(ttmp3, ttmp4, v0, v1);
       b.gradInit(ttmp5, 0.5 * (v0 * v0 + v1 * v1));
 
-      SPHERE_BLOCK_MIDDLE(b, exneriz, v0, v1);
+      SPHERE_BLOCK_MIDDLE3(b, exneriz, v0, v1);
 
       Real grad_v0, grad_v1;
       b.grad(grad_v0, grad_v1, ttmp5);
