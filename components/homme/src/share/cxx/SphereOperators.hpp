@@ -1206,7 +1206,7 @@ static constexpr int NPNP = NP * NP;
   for (int ix = 0; ix < NP; ix++) for(int iy = 0; iy < NP; iy++) { \
     B.update(ix,iy); \
     Kokkos::parallel_for( \
-        Kokkos::ThreadVectorRange(B.t, 1, NUM_PHYSICAL_LEV), \
+        Kokkos::ThreadVectorRange(B.t, 0, NUM_PHYSICAL_LEV), \
         [&](const int z_) { \
           B.z = z_;
 
@@ -1214,7 +1214,7 @@ static constexpr int NPNP = NP * NP;
   for (int ix = 0; ix < NP; ix++) for(int iy = 0; iy < NP; iy++) { \
     B.update(ix,iy); \
     Kokkos::parallel_for( \
-        Kokkos::ThreadVectorRange(B.t, 1, NUM_PHYSICAL_LEV), \
+        Kokkos::ThreadVectorRange(B.t, 0, NUM_PHYSICAL_LEV), \
         [&](const int z_) { \
           B.z = z_;
 
@@ -1227,7 +1227,7 @@ static constexpr int NPNP = NP * NP;
   for (int ix = 0; ix < NP; ix++) for(int iy = 0; iy < NP; iy++) { \
     B.update(ix,iy); \
     Kokkos::parallel_for( \
-        Kokkos::ThreadVectorRange(B.t, 1, NUM_PHYSICAL_LEV), \
+        Kokkos::ThreadVectorRange(B.t, 0, NUM_PHYSICAL_LEV), \
         [&](const int z) { \
           B.z = z; \
           X = sbo##X[B.x][B.y][B.z]; \
@@ -1240,7 +1240,7 @@ static constexpr int NPNP = NP * NP;
   for (int ix = 0; ix < NP; ix++) for(int iy = 0; iy < NP; iy++) { \
     B.update(ix,iy); \
     Kokkos::parallel_for( \
-        Kokkos::ThreadVectorRange(B.t, 1, NUM_PHYSICAL_LEV), \
+        Kokkos::ThreadVectorRange(B.t, 0, NUM_PHYSICAL_LEV), \
         [&](const int z) { \
           B.z = z;
 
@@ -1477,7 +1477,7 @@ struct SphereCol {
   {
 #if (WARP_SIZE == 1)
     Kokkos::parallel_for(
-      Kokkos::ThreadVectorRange(t, 1, num_lev),
+      Kokkos::ThreadVectorRange(t, 0, num_lev),
         [&](const int z_) {
           z = z_;
           f();
