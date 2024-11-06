@@ -1434,6 +1434,19 @@ struct SphereBlockOps {
 #endif
   }
 
+  template <typename F>
+  static void parallel_for(const SphereGlobal &sg, const int num_elems, const int num_scratch, F f) 
+  {
+    Kokkos::parallel_for(
+      __PRETTY_FUNCTION__,
+      SphereBlockOps::policy(num_elems, num_scratch),
+      KOKKOS_LAMBDA(const Team &team) {
+        SphereBlockOps b(sg, team);
+        if (b.skip()) return;
+        f(b);
+      });
+  }
+
 };
 
 #if (WARP_SIZE == 1)
@@ -1472,6 +1485,7 @@ struct SphereCol {
     z = t.team_rank();
   }
 
+#if 0
   template <typename F>
   KOKKOS_INLINE_FUNCTION void parallel_for(const int num_lev, F f)
   {
@@ -1486,6 +1500,7 @@ struct SphereCol {
     f();
 #endif
   }
+#endif
 
   static TeamPolicy policy(const int num_elems, const int num_lev)
   {
@@ -1494,6 +1509,18 @@ struct SphereCol {
 #else
     return TeamPolicy(num_elems * NPNP, num_lev);
 #endif
+  }
+
+  template <typename F>
+  static void parallel_for(const int num_elems, const int num_lev, F f)
+  {
+    Kokkos::parallel_for(
+      __PRETTY_FUNCTION__,
+      SphereCol::policy(num_elems, num_lev),
+      KOKKOS_LAMBDA(const Team &team) {
+        SphereCol c(team);
+        f(c);
+      });
   }
 };
 
@@ -1527,6 +1554,18 @@ struct SphereColOps: SphereCol {
     s1 *= scale_factor_inv;
     out(e,0,x,y,z) = dinv[0][0] * s0 + dinv[0][1] * s1;
     out(e,1,x,y,z) = dinv[1][0] * s0 + dinv[1][1] * s1;
+  }
+
+  template <typename F>
+  static void parallel_for(const SphereGlobal &sg, const int num_elems, const int num_lev, F f)
+  {
+    Kokkos::parallel_for(
+      __PRETTY_FUNCTION__,
+      SphereColOps::policy(num_elems, num_lev),
+      KOKKOS_LAMBDA(const Team &team) {
+        SphereColOps c(sg, team);
+        f(c);
+      });
   }
 };
 
@@ -1593,6 +1632,18 @@ struct SphereScanOps {
 #else
     return TeamPolicy(num_elems, NPNP, WARP_SIZE);
 #endif
+  }
+
+  template <typename F>
+  static void parallel_for(const int num_elems, F f)
+  {
+    Kokkos::parallel_for(
+      __PRETTY_FUNCTION__,
+      SphereScanOps::policy(num_elems),
+      KOKKOS_LAMBDA(const Team &team) {
+        SphereScanOps s(team);
+        f(s);
+      });
   }
 };
 
