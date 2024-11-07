@@ -1435,16 +1435,9 @@ struct SphereBlockOps {
   }
 
   template <typename F>
-  static void parallel_for(const SphereGlobal &sg, const int num_elems, const int num_scratch, F f) 
+  static void parallel_for(const int num_elems, const int num_scratch, F f) 
   {
-    Kokkos::parallel_for(
-      __PRETTY_FUNCTION__,
-      SphereBlockOps::policy(num_elems, num_scratch),
-      KOKKOS_LAMBDA(const Team &team) {
-        SphereBlockOps b(sg, team);
-        if (b.skip()) return;
-        f(b);
-      });
+    Kokkos::parallel_for(__PRETTY_FUNCTION__, SphereBlockOps::policy(num_elems, num_scratch), f);
   }
 
 };
@@ -1485,23 +1478,6 @@ struct SphereCol {
     z = t.team_rank();
   }
 
-#if 0
-  template <typename F>
-  KOKKOS_INLINE_FUNCTION void parallel_for(const int num_lev, F f)
-  {
-#if (WARP_SIZE == 1)
-    Kokkos::parallel_for(
-      Kokkos::ThreadVectorRange(t, 0, num_lev),
-        [&](const int z_) {
-          z = z_;
-          f();
-        });
-#else
-    f();
-#endif
-  }
-#endif
-
   static TeamPolicy policy(const int num_elems, const int num_lev)
   {
 #if (WARP_SIZE == 1)
@@ -1514,13 +1490,7 @@ struct SphereCol {
   template <typename F>
   static void parallel_for(const int num_elems, const int num_lev, F f)
   {
-    Kokkos::parallel_for(
-      __PRETTY_FUNCTION__,
-      SphereCol::policy(num_elems, num_lev),
-      KOKKOS_LAMBDA(const Team &team) {
-        SphereCol c(team);
-        f(c);
-      });
+    Kokkos::parallel_for(__PRETTY_FUNCTION__, SphereCol::policy(num_elems, num_lev), f);
   }
 };
 
@@ -1557,15 +1527,9 @@ struct SphereColOps: SphereCol {
   }
 
   template <typename F>
-  static void parallel_for(const SphereGlobal &sg, const int num_elems, const int num_lev, F f)
+  static void parallel_for(const int num_elems, const int num_lev, F f)
   {
-    Kokkos::parallel_for(
-      __PRETTY_FUNCTION__,
-      SphereColOps::policy(num_elems, num_lev),
-      KOKKOS_LAMBDA(const Team &team) {
-        SphereColOps c(sg, team);
-        f(c);
-      });
+    Kokkos::parallel_for(__PRETTY_FUNCTION__, SphereColOps::policy(num_elems, num_lev), f);
   }
 };
 
@@ -1637,13 +1601,7 @@ struct SphereScanOps {
   template <typename F>
   static void parallel_for(const int num_elems, F f)
   {
-    Kokkos::parallel_for(
-      __PRETTY_FUNCTION__,
-      SphereScanOps::policy(num_elems),
-      KOKKOS_LAMBDA(const Team &team) {
-        SphereScanOps s(team);
-        f(s);
-      });
+    Kokkos::parallel_for(__PRETTY_FUNCTION__, SphereScanOps::policy(num_elems), f);
   }
 };
 

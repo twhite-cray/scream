@@ -25,9 +25,11 @@ void CaarFunctorImpl::epoch1_blockOps()
   auto state_vtheta_dp= viewAsReal(m_state.m_vtheta_dp);
 
   SphereBlockOps::parallel_for(
-    sg, m_num_elems, 4,
-    KOKKOS_LAMBDA(SphereBlockOps &b) {
+    m_num_elems, 4,
+    KOKKOS_LAMBDA(const Team &team) {
+      SphereBlockOps b(sg, team);
       SphereBlockScratch ttmp0(b), ttmp1(b), ttmp2(b), ttmp3(b);
+      if (b.skip()) return;
 
       SPHERE_BLOCK_START3(b, v0, v1, vtheta);
 
@@ -95,7 +97,8 @@ void CaarFunctorImpl::epoch2_scanOps()
 
   SphereScanOps::parallel_for(
     m_num_elems,
-    KOKKOS_LAMBDA(SphereScanOps &s) {
+    KOKKOS_LAMBDA(const Team &team) {
+      SphereScanOps s(team);
 
       s.scan(buffers_dp_i, state_dp3d, data_n0, pi_i00);
       s.scan(buffers_w_tens, buffers_dp_tens, 0);
@@ -150,14 +153,16 @@ void CaarFunctorImpl::epoch3_blockOps()
   auto state_w_i = viewAsReal(m_state.m_w_i);
 
   SphereBlockOps::parallel_for(
-    sg, m_num_elems, 1,
-    KOKKOS_LAMBDA(SphereBlockOps &b) {
-      SphereBlockScratch tmp0(b);
+    m_num_elems, 1,
+    KOKKOS_LAMBDA(const Team &team) {
+      SphereBlockOps b(sg, team);
+      SphereBlockScratch ttmp0(b);
+      if (b.skip()) return;
 
       SPHERE_BLOCK_START0(b);
 
       const Real pi = 0.5 * (buffers_dp_i(b.e,b.x,b.y,b.z) + buffers_dp_i(b.e,b.x,b.y,b.z+1));
-      b.gradInit(tmp0, pi);
+      b.gradInit(ttmp0, pi);
 
       if (HYDROSTATIC) {
         Real exner = pi;
@@ -169,7 +174,7 @@ void CaarFunctorImpl::epoch3_blockOps()
       SPHERE_BLOCK_MIDDLE0(b);
 
       Real grad0, grad1;
-      b.grad(grad0, grad1, tmp0);
+      b.grad(grad0, grad1, ttmp0);
 
       Real omega = -0.5 * (buffers_w_tens(b.e,b.x,b.y,b.z) + buffers_w_tens(b.e,b.x,b.y,b.z+1));
       const Real uz = state_v(b.e,data_n0,0,b.x,b.y,b.z);
@@ -227,7 +232,8 @@ void CaarFunctorImpl::epoch4_scanOps()
 
   SphereScanOps::parallel_for(
     m_num_elems,
-    KOKKOS_LAMBDA(SphereScanOps &s) {
+    KOKKOS_LAMBDA(const Team &team) {
+      SphereScanOps s(team);
       s.nacs(state_phinh_i, data_n0, buffers_pnh, geometry_phis);
       Kokkos::parallel_for(
         Kokkos::ThreadVectorRange(s.t, NUM_PHYSICAL_LEV),
@@ -275,8 +281,9 @@ void CaarFunctorImpl::epoch5_colOps()
   auto state_w_i = viewAsReal(m_state.m_w_i);
 
   SphereColOps::parallel_for(
-    sg, m_num_elems, NUM_INTERFACE_LEV,
-    KOKKOS_LAMBDA(SphereColOps &c) {
+    m_num_elems, NUM_INTERFACE_LEV,
+    KOKKOS_LAMBDA(const Team &team) {
+      SphereColOps c(sg, team);
 
       c.grad(buffers_grad_phinh_i, state_phinh_i, data_n0);
       if (!HYDROSTATIC) c.grad(buffers_grad_w_i, state_w_i, data_n0);
@@ -371,9 +378,11 @@ void CaarFunctorImpl::epoch6_blockOps()
   auto state_w_i = viewAsReal(m_state.m_w_i);
 
   SphereBlockOps::parallel_for(
-    sg, m_num_elems, 6,
-    KOKKOS_LAMBDA(SphereBlockOps &b) {
+    m_num_elems, 6,
+    KOKKOS_LAMBDA(const Team &team) {
+      SphereBlockOps b(sg, team);
       SphereBlockScratch ttmp0(b), ttmp1(b), ttmp2(b), ttmp3(b), ttmp4(b), ttmp5(b);
+      if (b.skip()) return;
 
       SPHERE_BLOCK_START3(b, exneriz, v0, v1);
 
@@ -484,7 +493,8 @@ void CaarFunctorImpl::epoch7_col()
 
   SphereCol::parallel_for(
     m_num_elems, NUM_PHYSICAL_LEV,
-    KOKKOS_LAMBDA(SphereCol &c) {
+    KOKKOS_LAMBDA(const Team &team) {
+      const SphereCol c(team);
 
       const Real spheremp = geometry_spheremp(c.e,c.x,c.y);
       const Real scale1_dt_spheremp = scale1_dt * spheremp;
