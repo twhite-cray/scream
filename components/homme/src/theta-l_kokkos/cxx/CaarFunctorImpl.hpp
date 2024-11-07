@@ -119,13 +119,13 @@ struct CaarFunctorImpl {
 
   Kokkos::Array<std::shared_ptr<BoundaryExchange>, NUM_TIME_LEVELS> m_bes;
 
-  template <bool HYDROSTATIC, bool CONSERVATIVE> void epoch1_blockOps();
-  template <bool RSPLIT_ZERO> void epoch2_scanOps();
-  template <bool HYDROSTATIC, bool RSPLIT_ZERO> void epoch3_blockOps();
-  void epoch4_scanOps();
-  template <bool HYDROSTATIC, bool RSPLIT_ZERO> void epoch5_colOps();
-  template <bool HYDROSTATIC, bool RSPLIT_ZERO, bool PGRAD_CORRECTION> void epoch6_blockOps();
-  template <bool HYDROSTATIC, bool RSPLIT_ZERO> void epoch7_col();
+  template <bool HYDROSTATIC, bool CONSERVATIVE> void epoch1_blockOps(const OuterTeam &);
+  template <bool RSPLIT_ZERO> void epoch2_scanOps(const OuterTeam &);
+  template <bool HYDROSTATIC, bool RSPLIT_ZERO> void epoch3_blockOps(const OuterTeam &);
+  void epoch4_scanOps(const OuterTeam &);
+  template <bool HYDROSTATIC, bool RSPLIT_ZERO> void epoch5_colOps(const OuterTeam &);
+  template <bool HYDROSTATIC, bool RSPLIT_ZERO, bool PGRAD_CORRECTION> void epoch6_blockOps(const OuterTeam &);
+  template <bool HYDROSTATIC, bool RSPLIT_ZERO> void epoch7_col(const OuterTeam &);
   void caar_compute();
 
   public:

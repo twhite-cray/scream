@@ -1199,6 +1199,8 @@ static constexpr int NPNP = NP * NP;
 
 #if (WARP_SIZE == 1)
 
+using OuterTeam = TeamPolicy::member_type;
+
 #define SPHERE_BLOCK_START3(B,X,Y,Z) \
   Real X; Real sbo##X[NP][NP][NUM_PHYSICAL_LEV]; \
   Real Y; Real sbo##Y[NP][NP][NUM_PHYSICAL_LEV]; \
@@ -1252,6 +1254,8 @@ static constexpr int SPHERE_BLOCKS_PER_COL = 1;
 
 #else
 
+using OuterTeam = int;
+
 #define SPHERE_BLOCK_START3(B,X,Y,Z) Real X, Y, Z;
 #define SPHERE_BLOCK_START0(B)
 
@@ -1265,6 +1269,16 @@ static constexpr int SPHERE_BLOCK = NPNP * SPHERE_BLOCK_LEV;
 static constexpr int SPHERE_BLOCKS_PER_COL = (NUM_PHYSICAL_LEV - 1) / SPHERE_BLOCK_LEV + 1;
 
 #endif
+
+namespace SphereOuter {
+  template <typename F>
+  void parallel_for(const int num_elems, F f) {
+#if WARP_SIZE == 1
+#else
+    f(num_elems);
+#endif
+  }
+}
 
 struct SphereGlobal {
 

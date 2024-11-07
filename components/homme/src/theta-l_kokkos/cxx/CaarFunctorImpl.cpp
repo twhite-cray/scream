@@ -3,7 +3,7 @@
 namespace Homme {
 
 template <bool HYDROSTATIC, bool CONSERVATIVE>
-void CaarFunctorImpl::epoch1_blockOps()
+void CaarFunctorImpl::epoch1_blockOps(const OuterTeam &team)
 {
   auto buffers_dp_tens = viewAsReal(m_buffers.dp_tens);
   auto buffers_exner = viewAsReal(m_buffers.exner);
@@ -25,7 +25,7 @@ void CaarFunctorImpl::epoch1_blockOps()
   auto state_vtheta_dp= viewAsReal(m_state.m_vtheta_dp);
 
   SphereBlockOps::parallel_for(
-    m_num_elems, 4,
+    team, 4,
     KOKKOS_LAMBDA(const Team &team) {
       SphereBlockOps b(sg, team);
       SphereBlockScratch ttmp0(b), ttmp1(b), ttmp2(b), ttmp3(b);
@@ -83,7 +83,7 @@ void CaarFunctorImpl::epoch1_blockOps()
 }
 
 template <bool RSPLIT_ZERO>
-void CaarFunctorImpl::epoch2_scanOps()
+void CaarFunctorImpl::epoch2_scanOps(const OuterTeam &team)
 {
   auto buffers_dp_tens = viewAsReal(m_buffers.dp_tens);
   auto buffers_dp_i = viewAsReal(m_buffers.dp_i);
@@ -96,7 +96,7 @@ void CaarFunctorImpl::epoch2_scanOps()
   auto state_dp3d = viewAsReal(m_state.m_dp3d);
 
   SphereScanOps::parallel_for(
-    m_num_elems,
+    team,
     KOKKOS_LAMBDA(const Team &team) {
       SphereScanOps s(team);
 
@@ -127,7 +127,7 @@ void CaarFunctorImpl::epoch2_scanOps()
 }
 
 template <bool HYDROSTATIC, bool RSPLIT_ZERO>
-void CaarFunctorImpl::epoch3_blockOps()
+void CaarFunctorImpl::epoch3_blockOps(const OuterTeam &team)
 {
   auto buffers_dp_i = viewAsReal(m_buffers.dp_i);
   auto buffers_dp_tens = viewAsReal(m_buffers.dp_tens);
@@ -153,7 +153,7 @@ void CaarFunctorImpl::epoch3_blockOps()
   auto state_w_i = viewAsReal(m_state.m_w_i);
 
   SphereBlockOps::parallel_for(
-    m_num_elems, 1,
+    team, 1,
     KOKKOS_LAMBDA(const Team &team) {
       SphereBlockOps b(sg, team);
       SphereBlockScratch ttmp0(b);
@@ -219,7 +219,7 @@ void CaarFunctorImpl::epoch3_blockOps()
     });
 }
 
-void CaarFunctorImpl::epoch4_scanOps()
+void CaarFunctorImpl::epoch4_scanOps(const OuterTeam &team)
 {
   auto buffers_phi = viewAsReal(m_buffers.phi);
   auto buffers_pnh = viewAsReal(m_buffers.pnh);
@@ -231,7 +231,7 @@ void CaarFunctorImpl::epoch4_scanOps()
   auto state_phinh_i = viewAsReal(m_state.m_phinh_i);
 
   SphereScanOps::parallel_for(
-    m_num_elems,
+    team,
     KOKKOS_LAMBDA(const Team &team) {
       SphereScanOps s(team);
       s.nacs(state_phinh_i, data_n0, buffers_pnh, geometry_phis);
@@ -244,7 +244,7 @@ void CaarFunctorImpl::epoch4_scanOps()
 }
 
 template <bool HYDROSTATIC, bool RSPLIT_ZERO>
-void CaarFunctorImpl::epoch5_colOps()
+void CaarFunctorImpl::epoch5_colOps(const OuterTeam &team)
 {
   auto buffers_dp_i = viewAsReal(m_buffers.dp_i);
   auto buffers_dpnh_dp_i = viewAsReal(m_buffers.dpnh_dp_i);
@@ -281,7 +281,7 @@ void CaarFunctorImpl::epoch5_colOps()
   auto state_w_i = viewAsReal(m_state.m_w_i);
 
   SphereColOps::parallel_for(
-    m_num_elems, NUM_INTERFACE_LEV,
+    team, NUM_INTERFACE_LEV,
     KOKKOS_LAMBDA(const Team &team) {
       SphereColOps c(sg, team);
 
@@ -358,7 +358,7 @@ void CaarFunctorImpl::epoch5_colOps()
 }
 
 template <bool HYDROSTATIC, bool RSPLIT_ZERO, bool PGRAD_CORRECTION>
-void CaarFunctorImpl::epoch6_blockOps()
+void CaarFunctorImpl::epoch6_blockOps(const OuterTeam &team)
 {
   auto buffers_dpnh_dp_i = viewAsReal(m_buffers.dpnh_dp_i);
   auto buffers_exner = viewAsReal(m_buffers.exner);
@@ -378,7 +378,7 @@ void CaarFunctorImpl::epoch6_blockOps()
   auto state_w_i = viewAsReal(m_state.m_w_i);
 
   SphereBlockOps::parallel_for(
-    m_num_elems, 6,
+    team, 6,
     KOKKOS_LAMBDA(const Team &team) {
       SphereBlockOps b(sg, team);
       SphereBlockScratch ttmp0(b), ttmp1(b), ttmp2(b), ttmp3(b), ttmp4(b), ttmp5(b);
@@ -466,7 +466,7 @@ void CaarFunctorImpl::epoch6_blockOps()
 }
 
 template <bool HYDROSTATIC, bool RSPLIT_ZERO>
-void CaarFunctorImpl::epoch7_col()
+void CaarFunctorImpl::epoch7_col(const OuterTeam &team)
 {
   auto buffers_dp_tens = viewAsReal(m_buffers.dp_tens);
   auto buffers_eta_dot_dpdn = viewAsReal(m_buffers.eta_dot_dpdn);
@@ -492,7 +492,7 @@ void CaarFunctorImpl::epoch7_col()
   auto state_w_i = viewAsReal(m_state.m_w_i);
 
   SphereCol::parallel_for(
-    m_num_elems, NUM_PHYSICAL_LEV,
+    team, NUM_PHYSICAL_LEV,
     KOKKOS_LAMBDA(const Team &team) {
       const SphereCol c(team);
 
@@ -567,60 +567,65 @@ void CaarFunctorImpl::epoch7_col()
 
 void CaarFunctorImpl::caar_compute()
 {
-  if (m_theta_hydrostatic_mode) {
-    if (m_theta_advection_form == AdvectionForm::Conservative) epoch1_blockOps<true,true>();
-    else epoch1_blockOps<true,false>();
-  } else {
-    if (m_theta_advection_form == AdvectionForm::Conservative) epoch1_blockOps<false,true>();
-    else epoch1_blockOps<false,false>();
-  }
+  SphereOuter::parallel_for(
+    m_num_elems,
+    KOKKOS_LAMBDA(const OuterTeam &team) {
 
-  if (m_rsplit == 0) epoch2_scanOps<true>();
-  else epoch2_scanOps<false>();
+      if (m_theta_hydrostatic_mode) {
+        if (m_theta_advection_form == AdvectionForm::Conservative) epoch1_blockOps<true,true>(team);
+        else epoch1_blockOps<true,false>(team);
+      } else {
+        if (m_theta_advection_form == AdvectionForm::Conservative) epoch1_blockOps<false,true>(team);
+        else epoch1_blockOps<false,false>(team);
+      }
 
-  if (m_theta_hydrostatic_mode) {
-    if (m_rsplit == 0) epoch3_blockOps<true,true>();
-    else epoch3_blockOps<true,false>();
-  } else {
-    if (m_rsplit == 0) epoch3_blockOps<false,true>();
-    else epoch3_blockOps<false,false>();
-  }
+      if (m_rsplit == 0) epoch2_scanOps<true>(team);
+      else epoch2_scanOps<false>(team);
 
-  if (m_theta_hydrostatic_mode) epoch4_scanOps();
+      if (m_theta_hydrostatic_mode) {
+        if (m_rsplit == 0) epoch3_blockOps<true,true>(team);
+        else epoch3_blockOps<true,false>(team);
+      } else {
+        if (m_rsplit == 0) epoch3_blockOps<false,true>(team);
+        else epoch3_blockOps<false,false>(team);
+      }
 
-  if (m_theta_hydrostatic_mode) {
-    if (m_rsplit == 0) epoch5_colOps<true,true>();
-    else epoch5_colOps<true,false>();
-  } else {
-    if (m_rsplit == 0) epoch5_colOps<false,true>();
-    else epoch5_colOps<false,false>();
-  }
+      if (m_theta_hydrostatic_mode) epoch4_scanOps(team);
 
-  if (m_theta_hydrostatic_mode) {
-    if (m_rsplit == 0) {
-      if (m_pgrad_correction) epoch6_blockOps<true,true,true>();
-      else epoch6_blockOps<true,true,false>();
-    } else {
-      if (m_pgrad_correction) epoch6_blockOps<true,false,true>();
-      else epoch6_blockOps<true,false,false>();
-    }
-  } else {
-    if (m_rsplit == 0) {
-      if (m_pgrad_correction) epoch6_blockOps<false,true,true>();
-      else epoch6_blockOps<false,true,false>();
-    } else {
-      if (m_pgrad_correction) epoch6_blockOps<false,false,true>();
-      else epoch6_blockOps<false,false,false>();
-    }
-  }
+      if (m_theta_hydrostatic_mode) {
+        if (m_rsplit == 0) epoch5_colOps<true,true>(team);
+        else epoch5_colOps<true,false>(team);
+      } else {
+        if (m_rsplit == 0) epoch5_colOps<false,true>(team);
+        else epoch5_colOps<false,false>(team);
+      }
 
-  if (m_theta_hydrostatic_mode) {
-    if (m_rsplit == 0) epoch7_col<true,true>();
-    else epoch7_col<true,false>();
-  } else {
-    if (m_rsplit == 0) epoch7_col<false,true>();
-    else epoch7_col<false,false>();
-  }
+      if (m_theta_hydrostatic_mode) {
+        if (m_rsplit == 0) {
+          if (m_pgrad_correction) epoch6_blockOps<true,true,true>(team);
+          else epoch6_blockOps<true,true,false>(team);
+        } else {
+          if (m_pgrad_correction) epoch6_blockOps<true,false,true>(team);
+          else epoch6_blockOps<true,false,false>(team);
+        }
+      } else {
+        if (m_rsplit == 0) {
+          if (m_pgrad_correction) epoch6_blockOps<false,true,true>(team);
+          else epoch6_blockOps<false,true,false>(team);
+        } else {
+          if (m_pgrad_correction) epoch6_blockOps<false,false,true>(team);
+          else epoch6_blockOps<false,false,false>(team);
+        }
+      }
+
+      if (m_theta_hydrostatic_mode) {
+        if (m_rsplit == 0) epoch7_col<true,true>(team);
+        else epoch7_col<true,false>(team);
+      } else {
+        if (m_rsplit == 0) epoch7_col<false,true>(team);
+        else epoch7_col<false,false>(team);
+      }
+    });
 }
 
 }
