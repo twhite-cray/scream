@@ -3,7 +3,7 @@
 namespace Homme {
 
 template <bool HYDROSTATIC, bool CONSERVATIVE>
-void CaarFunctorImpl::epoch1_blockOps(const OuterTeam &team)
+void CaarFunctorImpl::epoch1_blockOps(const SphereOuter::Team &team)
 {
   auto buffers_dp_tens = viewAsReal(m_buffers.dp_tens);
   auto buffers_exner = viewAsReal(m_buffers.exner);
@@ -83,7 +83,7 @@ void CaarFunctorImpl::epoch1_blockOps(const OuterTeam &team)
 }
 
 template <bool RSPLIT_ZERO>
-void CaarFunctorImpl::epoch2_scanOps(const OuterTeam &team)
+void CaarFunctorImpl::epoch2_scanOps(const SphereOuter::Team &team)
 {
   auto buffers_dp_tens = viewAsReal(m_buffers.dp_tens);
   auto buffers_dp_i = viewAsReal(m_buffers.dp_i);
@@ -127,7 +127,7 @@ void CaarFunctorImpl::epoch2_scanOps(const OuterTeam &team)
 }
 
 template <bool HYDROSTATIC, bool RSPLIT_ZERO>
-void CaarFunctorImpl::epoch3_blockOps(const OuterTeam &team)
+void CaarFunctorImpl::epoch3_blockOps(const SphereOuter::Team &team)
 {
   auto buffers_dp_i = viewAsReal(m_buffers.dp_i);
   auto buffers_dp_tens = viewAsReal(m_buffers.dp_tens);
@@ -219,7 +219,7 @@ void CaarFunctorImpl::epoch3_blockOps(const OuterTeam &team)
     });
 }
 
-void CaarFunctorImpl::epoch4_scanOps(const OuterTeam &team)
+void CaarFunctorImpl::epoch4_scanOps(const SphereOuter::Team &team)
 {
   auto buffers_phi = viewAsReal(m_buffers.phi);
   auto buffers_pnh = viewAsReal(m_buffers.pnh);
@@ -244,7 +244,7 @@ void CaarFunctorImpl::epoch4_scanOps(const OuterTeam &team)
 }
 
 template <bool HYDROSTATIC, bool RSPLIT_ZERO>
-void CaarFunctorImpl::epoch5_colOps(const OuterTeam &team)
+void CaarFunctorImpl::epoch5_colOps(const SphereOuter::Team &team)
 {
   auto buffers_dp_i = viewAsReal(m_buffers.dp_i);
   auto buffers_dpnh_dp_i = viewAsReal(m_buffers.dpnh_dp_i);
@@ -358,7 +358,7 @@ void CaarFunctorImpl::epoch5_colOps(const OuterTeam &team)
 }
 
 template <bool HYDROSTATIC, bool RSPLIT_ZERO, bool PGRAD_CORRECTION>
-void CaarFunctorImpl::epoch6_blockOps(const OuterTeam &team)
+void CaarFunctorImpl::epoch6_blockOps(const SphereOuter::Team &team)
 {
   auto buffers_dpnh_dp_i = viewAsReal(m_buffers.dpnh_dp_i);
   auto buffers_exner = viewAsReal(m_buffers.exner);
@@ -466,7 +466,7 @@ void CaarFunctorImpl::epoch6_blockOps(const OuterTeam &team)
 }
 
 template <bool HYDROSTATIC, bool RSPLIT_ZERO>
-void CaarFunctorImpl::epoch7_col(const OuterTeam &team)
+void CaarFunctorImpl::epoch7_col(const SphereOuter::Team &team)
 {
   auto buffers_dp_tens = viewAsReal(m_buffers.dp_tens);
   auto buffers_eta_dot_dpdn = viewAsReal(m_buffers.eta_dot_dpdn);
@@ -569,7 +569,7 @@ void CaarFunctorImpl::caar_compute()
 {
   SphereOuter::parallel_for(
     m_num_elems,
-    KOKKOS_LAMBDA(const OuterTeam &team) {
+    KOKKOS_LAMBDA(const SphereOuter::Team &team) {
 
       if (m_theta_hydrostatic_mode) {
         if (m_theta_advection_form == AdvectionForm::Conservative) epoch1_blockOps<true,true>(team);

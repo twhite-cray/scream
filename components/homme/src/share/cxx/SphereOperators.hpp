@@ -1199,8 +1199,6 @@ static constexpr int NPNP = NP * NP;
 
 #if (WARP_SIZE == 1)
 
-using OuterTeam = TeamPolicy::member_type;
-
 #define SPHERE_BLOCK_START3(B,X,Y,Z) \
   Real X; Real sbo##X[NP][NP][NUM_PHYSICAL_LEV]; \
   Real Y; Real sbo##Y[NP][NP][NUM_PHYSICAL_LEV]; \
@@ -1271,13 +1269,15 @@ static constexpr int SPHERE_BLOCKS_PER_COL = (NUM_PHYSICAL_LEV - 1) / SPHERE_BLO
 #endif
 
 namespace SphereOuter {
+#if WARP_SIZE == 1
+#error "WARP_SIZE == 1"
+#else
+  using Team = int;
   template <typename F>
   void parallel_for(const int num_elems, F f) {
-#if WARP_SIZE == 1
-#else
     f(num_elems);
-#endif
   }
+#endif
 }
 
 struct SphereGlobal {
@@ -1438,21 +1438,19 @@ struct SphereBlockOps {
     t1.sv(x,y) = g.d(e,1,0,x,y) * v0 + g.d(e,1,1,x,y) * v1;
   }
 
-  static TeamPolicy policy(const int num_elems, const int num_scratch)
-  {
 #if (WARP_SIZE == 1)
-    return TeamPolicy(num_elems, 1, NUM_PHYSICAL_LEV);
+#error "WARP_SIZE == 1"
 #else
-    return TeamPolicy(num_elems * SPHERE_BLOCKS_PER_COL, SPHERE_BLOCK).
-      set_scratch_size(0, Kokkos::PerTeam(num_scratch * SphereBlockScratchView::shmem_size()));
-#endif
-  }
-
   template <typename F>
   static void parallel_for(const int num_elems, const int num_scratch, F f) 
   {
-    Kokkos::parallel_for(__PRETTY_FUNCTION__, SphereBlockOps::policy(num_elems, num_scratch), f);
+    Kokkos::parallel_for(
+      __PRETTY_FUNCTION__,
+      TeamPolicy(num_elems * SPHERE_BLOCKS_PER_COL, SPHERE_BLOCK).
+      set_scratch_size(0, Kokkos::PerTeam(num_scratch * SphereBlockScratchView::shmem_size())),
+      f);
   }
+#endif
 
 };
 
@@ -1492,20 +1490,18 @@ struct SphereCol {
     z = t.team_rank();
   }
 
-  static TeamPolicy policy(const int num_elems, const int num_lev)
-  {
 #if (WARP_SIZE == 1)
-    return TeamPolicy(num_elems * NPNP, 1, num_lev);
+#error "WARP_SIZE == 1"
 #else
-    return TeamPolicy(num_elems * NPNP, num_lev);
-#endif
-  }
-
   template <typename F>
   static void parallel_for(const int num_elems, const int num_lev, F f)
   {
-    Kokkos::parallel_for(__PRETTY_FUNCTION__, SphereCol::policy(num_elems, num_lev), f);
+    Kokkos::parallel_for(
+      __PRETTY_FUNCTION__,
+      TeamPolicy(num_elems * NPNP, num_lev),
+      f);
   }
+#endif
 };
 
 struct SphereColOps: SphereCol {
@@ -1538,12 +1534,6 @@ struct SphereColOps: SphereCol {
     s1 *= scale_factor_inv;
     out(e,0,x,y,z) = dinv[0][0] * s0 + dinv[0][1] * s1;
     out(e,1,x,y,z) = dinv[1][0] * s0 + dinv[1][1] * s1;
-  }
-
-  template <typename F>
-  static void parallel_for(const int num_elems, const int num_lev, F f)
-  {
-    Kokkos::parallel_for(__PRETTY_FUNCTION__, SphereColOps::policy(num_elems, num_lev), f);
   }
 };
 
@@ -1603,20 +1593,18 @@ struct SphereScanOps {
       });
   }
 
-  static TeamPolicy policy(const int num_elems)
-  {
-#if (WARP_SIZE == 1)
-    return TeamPolicy(num_elems * NPNP, 1, NUM_PHYSICAL_LEV);
+#if WARP_SIZE == 1
+#error "WARP_SIZE == 1"
 #else
-    return TeamPolicy(num_elems, NPNP, WARP_SIZE);
-#endif
-  }
-
   template <typename F>
   static void parallel_for(const int num_elems, F f)
   {
-    Kokkos::parallel_for(__PRETTY_FUNCTION__, SphereScanOps::policy(num_elems), f);
+    Kokkos::parallel_for(
+      __PRETTY_FUNCTION__,
+      TeamPolicy(num_elems, NPNP, WARP_SIZE),
+      f);
   }
+#endif
 };
 
 } // namespace Homme
