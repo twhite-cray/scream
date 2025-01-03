@@ -26,7 +26,7 @@ void CaarFunctorImpl::epoch1_blockOps(const SphereOuter::Team &team)
 
   SphereBlockOps::parallel_for(
     team, 4,
-    KOKKOS_LAMBDA(const Team &team) {
+    KOKKOS_LAMBDA(const SphereBlockOps::Team &team) {
       SphereBlockOps b(sg, team);
       SphereBlockScratch ttmp0(b), ttmp1(b), ttmp2(b), ttmp3(b);
       if (b.skip()) return;
@@ -97,7 +97,7 @@ void CaarFunctorImpl::epoch2_scanOps(const SphereOuter::Team &team)
 
   SphereScanOps::parallel_for(
     team,
-    KOKKOS_LAMBDA(const Team &team) {
+    KOKKOS_LAMBDA(const SphereScanOps::Team &team) {
       SphereScanOps s(team);
 
       s.scan(buffers_dp_i, state_dp3d, data_n0, pi_i00);
@@ -154,7 +154,7 @@ void CaarFunctorImpl::epoch3_blockOps(const SphereOuter::Team &team)
 
   SphereBlockOps::parallel_for(
     team, 1,
-    KOKKOS_LAMBDA(const Team &team) {
+    KOKKOS_LAMBDA(const SphereBlockOps::Team &team) {
       SphereBlockOps b(sg, team);
       SphereBlockScratch ttmp0(b);
       if (b.skip()) return;
@@ -232,7 +232,7 @@ void CaarFunctorImpl::epoch4_scanOps(const SphereOuter::Team &team)
 
   SphereScanOps::parallel_for(
     team,
-    KOKKOS_LAMBDA(const Team &team) {
+    KOKKOS_LAMBDA(const SphereScanOps::Team &team) {
       SphereScanOps s(team);
       s.nacs(state_phinh_i, data_n0, buffers_pnh, geometry_phis);
       Kokkos::parallel_for(
@@ -282,7 +282,7 @@ void CaarFunctorImpl::epoch5_colOps(const SphereOuter::Team &team)
 
   SphereColOps::parallel_for(
     team, NUM_INTERFACE_LEV,
-    KOKKOS_LAMBDA(const Team &team) {
+    KOKKOS_LAMBDA(const SphereColOps::Team &team) {
       SphereColOps c(sg, team);
 
       c.grad(buffers_grad_phinh_i, state_phinh_i, data_n0);
@@ -379,7 +379,7 @@ void CaarFunctorImpl::epoch6_blockOps(const SphereOuter::Team &team)
 
   SphereBlockOps::parallel_for(
     team, 6,
-    KOKKOS_LAMBDA(const Team &team) {
+    KOKKOS_LAMBDA(const SphereBlockOps::Team &team) {
       SphereBlockOps b(sg, team);
       SphereBlockScratch ttmp0(b), ttmp1(b), ttmp2(b), ttmp3(b), ttmp4(b), ttmp5(b);
       if (b.skip()) return;
@@ -493,7 +493,7 @@ void CaarFunctorImpl::epoch7_col(const SphereOuter::Team &team)
 
   SphereCol::parallel_for(
     team, NUM_PHYSICAL_LEV,
-    KOKKOS_LAMBDA(const Team &team) {
+    KOKKOS_LAMBDA(const SphereCol::Team &team) {
       const SphereCol c(team);
 
       const Real spheremp = geometry_spheremp(c.e,c.x,c.y);
