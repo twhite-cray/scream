@@ -1197,61 +1197,56 @@ using TeamPolicy = Kokkos::TeamPolicy<ExecSpace>;
 #endif
 
 #if (WARP_SIZE == 1)
-
-#define SPHERE_BLOCK_START3(B,X,Y,Z) \
-  Real X; Real sbo##X[NP][NP][NUM_PHYSICAL_LEV]; \
-  Real Y; Real sbo##Y[NP][NP][NUM_PHYSICAL_LEV]; \
-  Real Z; Real sbo##Z[NP][NP][NUM_PHYSICAL_LEV]; \
+#define SPHERE_BLOCK_START3(B,Z,V1,V2,V3) \
+  Real sbo##V1[NP][NP][NUM_PHYSICAL_LEV]; \
+  Real sbo##V2[NP][NP][NUM_PHYSICAL_LEV]; \
+  Real sbo##V3[NP][NP][NUM_PHYSICAL_LEV]; \
   for (int ix = 0; ix < NP; ix++) for(int iy = 0; iy < NP; iy++) { \
     B.update(ix,iy); \
-    Kokkos::parallel_for( \
-        Kokkos::ThreadVectorRange(B.t, 0, NUM_PHYSICAL_LEV), \
-        [&](const int z_) { \
-          B.z = z_;
+    _Pragma("vector always assert") \
+    for (int Z = 0; Z < NUM_PHYSICAL_LEV; Z++) { \
+      Real V1; \
+      Real V2; \
+      Real V3;
 
-#define SPHERE_BLOCK_START0(B) \
+#define SPHERE_BLOCK_START0(B,Z) \
   for (int ix = 0; ix < NP; ix++) for(int iy = 0; iy < NP; iy++) { \
     B.update(ix,iy); \
-    Kokkos::parallel_for( \
-        Kokkos::ThreadVectorRange(B.t, 0, NUM_PHYSICAL_LEV), \
-        [&](const int z_) { \
-          B.z = z_;
+    _Pragma("vector always assert") \
+    for (int Z = 0; Z < NUM_PHYSICAL_LEV; Z++) {
 
-#define SPHERE_BLOCK_MIDDLE3(B,X,Y,Z) \
-          sbo##X[B.x][B.y][B.z] = X; \
-          sbo##Y[B.x][B.y][B.z] = Y; \
-          sbo##Z[B.x][B.y][B.z] = Z; \
-        });\
+#define SPHERE_BLOCK_MIDDLE3(B,Z,V1,V2,V3) \
+      sbo##V1[B.x][B.y][Z] = V1; \
+      sbo##V2[B.x][B.y][Z] = V2; \
+      sbo##V3[B.x][B.y][Z] = V3; \
+    } \
   } \
   for (int ix = 0; ix < NP; ix++) for(int iy = 0; iy < NP; iy++) { \
     B.update(ix,iy); \
-    Kokkos::parallel_for( \
-        Kokkos::ThreadVectorRange(B.t, 0, NUM_PHYSICAL_LEV), \
-        [&](const int z) { \
-          B.z = z; \
-          X = sbo##X[B.x][B.y][B.z]; \
-          Y = sbo##Y[B.x][B.y][B.z]; \
-          Z = sbo##Z[B.x][B.y][B.z]; 
+    _Pragma("vector always assert") \
+    for (int Z = 0; Z < NUM_PHYSICAL_LEV; Z++) { \
+      Real V1 = sbo##V1[B.x][B.y][Z]; \
+      Real V2 = sbo##V2[B.x][B.y][Z]; \
+      Real V3 = sbo##V3[B.x][B.y][Z]; 
 
-#define SPHERE_BLOCK_MIDDLE0(B) \
-        });\
+#define SPHERE_BLOCK_MIDDLE0(B,Z) \
+    } \
   } \
   for (int ix = 0; ix < NP; ix++) for(int iy = 0; iy < NP; iy++) { \
     B.update(ix,iy); \
-    Kokkos::parallel_for( \
-        Kokkos::ThreadVectorRange(B.t, 0, NUM_PHYSICAL_LEV), \
-        [&](const int z) { \
-          B.z = z;
+    _Pragma("vector always assert") \
+    for (int Z = 0; Z < NUM_PHYSICAL_LEV; Z++) {
 
-#define SPHERE_BLOCK_END() }); }
+#define SPHERE_BLOCK_END() } }
 
 #else
 
-#define SPHERE_BLOCK_START3(B,X,Y,Z) Real X, Y, Z;
-#define SPHERE_BLOCK_START0(B)
-
-#define SPHERE_BLOCK_MIDDLE3(B,X,Y,Z) B.t.team_barrier();
-#define SPHERE_BLOCK_MIDDLE0(B) B.t.team_barrier();
+#define SPHERE_BLOCK_START3(B,Z,V1,V2,V3) \
+      Real V1, V2, V3; \
+      const int Z = B.z;
+#define SPHERE_BLOCK_START0(B,Z) const int Z = B.z;
+#define SPHERE_BLOCK_MIDDLE3(B,Z,V1,V2,V3) B.t.team_barrier();
+#define SPHERE_BLOCK_MIDDLE0(B,Z) B.t.team_barrier();
 
 #define SPHERE_BLOCK_END()
 
@@ -1262,7 +1257,7 @@ static constexpr int SPHERE_BLOCKS_PER_COL = (NUM_PHYSICAL_LEV - 1) / SPHERE_BLO
 #endif
 
 namespace SphereOuter {
-#if WARP_SIZE == 1
+#if (WARP_SIZE == 1)
   using Team = TeamPolicy::member_type;
   template <typename F>
   void parallel_for(const int num_elems, F f) {
@@ -1302,11 +1297,10 @@ struct SphereBlockOps;
 #if (WARP_SIZE == 1)
 
 struct SphereBlockScratch {
-  const SphereBlockOps &b;
   Real v[NP][NP][NUM_PHYSICAL_LEV];
   KOKKOS_INLINE_FUNCTION SphereBlockScratch(const SphereBlockOps &);
-  KOKKOS_INLINE_FUNCTION const Real &sv(int x, int y) const;
-  KOKKOS_INLINE_FUNCTION Real &sv(int x, int y);
+  KOKKOS_INLINE_FUNCTION const Real &sv(int x, int y, int z) const;
+  KOKKOS_INLINE_FUNCTION Real &sv(int x, int y, int z);
 };
 
 #else
@@ -1325,8 +1319,10 @@ using SphereBlockScratchSubview = Kokkos::Subview<
 
 struct SphereBlockScratch {
   SphereBlockScratchView v;
-  SphereBlockScratchSubview sv;
+  SphereBlockScratchSubview sv_;
   KOKKOS_INLINE_FUNCTION SphereBlockScratch(const SphereBlockOps &b);
+  KOKKOS_INLINE_FUNCTION const Real &sv(int x, int y, int z) const;
+  KOKKOS_INLINE_FUNCTION Real &sv(int x, int y, int z);
 };
 
 #endif
@@ -1342,7 +1338,10 @@ struct SphereBlockOps {
   Real dinv[2][2];
   Real dvvx[NP];
   Real dvvy[NP];
-  int e,x,y,z;
+  int e,x,y;
+#if (WARP_SIZE != 1)
+  int z;
+#endif
 
   KOKKOS_INLINE_FUNCTION SphereBlockOps(const SphereGlobal &sg, const Team &team):
     g(sg),
@@ -1351,16 +1350,16 @@ struct SphereBlockOps {
   {
 #if (WARP_SIZE == 1)
     e = t.league_rank();
-    x = y = z = 0;
+    x = y = 0;
 #else
     const int lr = t.league_rank();
     e = lr / SPHERE_BLOCKS_PER_COL;
     const int iw = lr % SPHERE_BLOCKS_PER_COL;
     const int tr = t.team_rank();
     const int ixy = tr / SPHERE_BLOCK_LEV;
+    update(ixy / NP, ixy % NP);
     const int dz = tr % SPHERE_BLOCK_LEV;
     z = dz + iw * SPHERE_BLOCK_LEV;
-    update(ixy / NP, ixy % NP);
 #endif
   }
 
@@ -1377,32 +1376,32 @@ struct SphereBlockOps {
     }
   }
 
-  KOKKOS_INLINE_FUNCTION Real div(const SphereBlockScratch &t0, const SphereBlockScratch &t1)
+  KOKKOS_INLINE_FUNCTION Real div(const SphereBlockScratch &t0, const SphereBlockScratch &t1, const int z)
   {
     // Separately compute du and dv to match Fortran bfb
     Real du = 0;
     Real dv = 0;
     for (int j = 0; j < NP; j++) {
-      du += dvvy[j] * t0.sv(x,j);
-      dv += dvvx[j] * t1.sv(j,y);
+      du += dvvy[j] * t0.sv(x,j,z);
+      dv += dvvx[j] * t1.sv(j,y,z);
     }
     if (rrdmd == 0) rrdmd = (1.0 / metdet) * scale_factor_inv;
     return (du + dv) * rrdmd;
   }
 
-  KOKKOS_INLINE_FUNCTION void divInit(SphereBlockScratch &t0, SphereBlockScratch &t1, const Real v0, const Real v1) const
+  KOKKOS_INLINE_FUNCTION void divInit(SphereBlockScratch &t0, SphereBlockScratch &t1, const Real v0, const Real v1, const int z) const
   {
-    t0.sv(x,y) = (dinv[0][0] * v0 + dinv[1][0] * v1) * metdet;
-    t1.sv(x,y) = (dinv[0][1] * v0 + dinv[1][1] * v1) * metdet;
+    t0.sv(x,y,z) = (dinv[0][0] * v0 + dinv[1][0] * v1) * metdet;
+    t1.sv(x,y,z) = (dinv[0][1] * v0 + dinv[1][1] * v1) * metdet;
   }
 
-  KOKKOS_INLINE_FUNCTION void grad(Real &g0, Real &g1, const SphereBlockScratch &t) const
+  KOKKOS_INLINE_FUNCTION void grad(Real &g0, Real &g1, const SphereBlockScratch &t, const int z) const
   {
     Real s0 = 0;
     Real s1 = 0;
     for (int j = 0; j < NP; j++) {
-      s0 += dvvy[j] * t.sv(x,j);
-      s1 += dvvx[j] * t.sv(j,y);
+      s0 += dvvy[j] * t.sv(x,j,z);
+      s1 += dvvx[j] * t.sv(j,y,z);
     }
     s0 *= scale_factor_inv;
     s1 *= scale_factor_inv;
@@ -1410,29 +1409,36 @@ struct SphereBlockOps {
     g1 = dinv[1][0] * s0 + dinv[1][1] * s1;
   }
 
-  KOKKOS_INLINE_FUNCTION void gradInit(SphereBlockScratch &t0, const Real v0)
+  KOKKOS_INLINE_FUNCTION void gradInit(SphereBlockScratch &t0, const Real v0, const int z)
   {
-    t0.sv(x,y) = v0;
+    t0.sv(x,y,z) = v0;
   }
 
-  KOKKOS_INLINE_FUNCTION bool skip() const { return (z >= NUM_PHYSICAL_LEV); }
+  KOKKOS_INLINE_FUNCTION bool skip() const 
+  { 
+#if (WARP_SIZE == 1)
+    return false;
+#else
+    return (z >= NUM_PHYSICAL_LEV);
+#endif
+  }
 
-  KOKKOS_INLINE_FUNCTION Real vort(const SphereBlockScratch &t0, const SphereBlockScratch &t1)
+  KOKKOS_INLINE_FUNCTION Real vort(const SphereBlockScratch &t0, const SphereBlockScratch &t1, const int z)
   {
     Real du = 0;
     Real dv = 0;
     for (int j = 0; j < NP; j++) {
-      du += dvvx[j] * t0.sv(j,y);
-      dv += dvvy[j] * t1.sv(x,j);
+      du += dvvx[j] * t0.sv(j,y,z);
+      dv += dvvy[j] * t1.sv(x,j,z);
     }
     if (rrdmd == 0) rrdmd = (1.0 / metdet) * scale_factor_inv;
     return (dv - du) * rrdmd;
   }
 
-  KOKKOS_INLINE_FUNCTION void vortInit(SphereBlockScratch &t0, SphereBlockScratch &t1, const Real v0, const Real v1) const
+  KOKKOS_INLINE_FUNCTION void vortInit(SphereBlockScratch &t0, SphereBlockScratch &t1, const Real v0, const Real v1, const int z) const
   {
-    t0.sv(x,y) = g.d(e,0,0,x,y) * v0 + g.d(e,0,1,x,y) * v1;
-    t1.sv(x,y) = g.d(e,1,0,x,y) * v0 + g.d(e,1,1,x,y) * v1;
+    t0.sv(x,y,z) = g.d(e,0,0,x,y) * v0 + g.d(e,0,1,x,y) * v1;
+    t1.sv(x,y,z) = g.d(e,1,0,x,y) * v0 + g.d(e,1,1,x,y) * v1;
   }
 
 #if (WARP_SIZE == 1)
@@ -1457,22 +1463,26 @@ struct SphereBlockOps {
 
 #if (WARP_SIZE == 1)
 
-KOKKOS_INLINE_FUNCTION SphereBlockScratch::SphereBlockScratch(const SphereBlockOps &b):
-  b(b)
-{}
+KOKKOS_INLINE_FUNCTION SphereBlockScratch::SphereBlockScratch(const SphereBlockOps &b) {}
 
-KOKKOS_INLINE_FUNCTION const Real &SphereBlockScratch::sv(const int x, const int y) const
-{ return v[x][y][b.z]; }
+KOKKOS_INLINE_FUNCTION const Real &SphereBlockScratch::sv(const int x, const int y, const int z) const
+{ return v[x][y][z]; }
 
-KOKKOS_INLINE_FUNCTION Real &SphereBlockScratch::sv(const int x, const int y)
-{ return v[x][y][b.z]; }
+KOKKOS_INLINE_FUNCTION Real &SphereBlockScratch::sv(const int x, const int y, const int z)
+{ return v[x][y][z]; }
 
 #else
 
 KOKKOS_INLINE_FUNCTION SphereBlockScratch::SphereBlockScratch(const SphereBlockOps &b):
   v(b.t.team_scratch(0)),
-  sv(Kokkos::subview(v, b.z % SPHERE_BLOCK_LEV, Kokkos::ALL, Kokkos::ALL))
+  sv_(Kokkos::subview(v, b.z % SPHERE_BLOCK_LEV, Kokkos::ALL, Kokkos::ALL))
 {}
+
+KOKKOS_INLINE_FUNCTION const Real &SphereBlockScratch::sv(const int x, const int y, int) const
+{ return sv_(x,y); }
+
+KOKKOS_INLINE_FUNCTION Real &SphereBlockScratch::sv(const int x, const int y, int)
+{ return sv_(x,y); }
 
 #endif
 
@@ -1493,9 +1503,8 @@ struct SphereCol {
   {
     const int e = outer.league_rank();
     for (int x = 0; x < NP; x++) for (int y = 0; y < NP; y++) {
-      Kokkos::parallel_for(
-        Kokkos::ThreadVectorRange(outer, num_lev),
-        [=] (const int z) { f(Team{e,x,y,z}); });
+      _Pragma("vector always assert")
+      for (int z = 0; z < num_lev; z++) f(Team{e,x,y,z});
     }
   }
 #else
