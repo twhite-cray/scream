@@ -1199,56 +1199,52 @@ using TeamPolicy = Kokkos::TeamPolicy<ExecSpace>;
 #if (WARP_SIZE == 1)
 
 #define SPHERE_BLOCK_START3(B,X,Y,Z) \
-  Real X; Real sbo##X[NP][NP][NUM_PHYSICAL_LEV]; \
-  Real Y; Real sbo##Y[NP][NP][NUM_PHYSICAL_LEV]; \
-  Real Z; Real sbo##Z[NP][NP][NUM_PHYSICAL_LEV]; \
+  Scalar X; Scalar sbo##X[NP][NP][NUM_LEV]; \
+  Scalar Y; Scalar sbo##Y[NP][NP][NUM_LEV]; \
+  Scalar Z; Scalar sbo##Z[NP][NP][NUM_LEV]; \
   for (int ix = 0; ix < NP; ix++) for(int iy = 0; iy < NP; iy++) { \
-    B.update(ix,iy); \
-    Kokkos::parallel_for( \
-        Kokkos::ThreadVectorRange(B.t, 0, NUM_PHYSICAL_LEV), \
-        [&](const int z_) { \
-          B.z = z_;
+    B.update(ix, iy); \
+    for (int iz = 0; iz < NUM_LEV; iz++) { \
+      B.z = iz;
 
 #define SPHERE_BLOCK_START0(B) \
   for (int ix = 0; ix < NP; ix++) for(int iy = 0; iy < NP; iy++) { \
     B.update(ix,iy); \
-    Kokkos::parallel_for( \
-        Kokkos::ThreadVectorRange(B.t, 0, NUM_PHYSICAL_LEV), \
-        [&](const int z_) { \
-          B.z = z_;
+    for (int iz = 0; iz < NUM_LEV; iz++) { \
+      B.z = iz;
 
 #define SPHERE_BLOCK_MIDDLE3(B,X,Y,Z) \
-          sbo##X[B.x][B.y][B.z] = X; \
-          sbo##Y[B.x][B.y][B.z] = Y; \
-          sbo##Z[B.x][B.y][B.z] = Z; \
-        });\
+      sbo##X[B.x][B.y][B.z] = X; \
+      sbo##Y[B.x][B.y][B.z] = Y; \
+      sbo##Z[B.x][B.y][B.z] = Z; \
+    }\
   } \
   for (int ix = 0; ix < NP; ix++) for(int iy = 0; iy < NP; iy++) { \
     B.update(ix,iy); \
-    Kokkos::parallel_for( \
-        Kokkos::ThreadVectorRange(B.t, 0, NUM_PHYSICAL_LEV), \
-        [&](const int z) { \
-          B.z = z; \
-          X = sbo##X[B.x][B.y][B.z]; \
-          Y = sbo##Y[B.x][B.y][B.z]; \
-          Z = sbo##Z[B.x][B.y][B.z]; 
+    for (int iz = 0; iz < NUM_LEV; iz++) { \
+      B.z = iz; \
+      X = sbo##X[B.x][B.y][B.z]; \
+      Y = sbo##Y[B.x][B.y][B.z]; \
+      Z = sbo##Z[B.x][B.y][B.z]; 
 
 #define SPHERE_BLOCK_MIDDLE0(B) \
-        });\
+    } \
   } \
   for (int ix = 0; ix < NP; ix++) for(int iy = 0; iy < NP; iy++) { \
     B.update(ix,iy); \
-    Kokkos::parallel_for( \
-        Kokkos::ThreadVectorRange(B.t, 0, NUM_PHYSICAL_LEV), \
-        [&](const int z) { \
-          B.z = z;
+    for (int iz = 0; iz < NUM_LEV; iz++) { \
+      B.z = iz;
 
-#define SPHERE_BLOCK_END() }); }
+#define SPHERE_BLOCK_END() } }
 
 #else
 
-#define SPHERE_BLOCK_START3(B,X,Y,Z) Real X, Y, Z;
-#define SPHERE_BLOCK_START0(B)
+      static_assert(VECTOR_SIZE == 1, "VECTOR_SIZE != 1");
+
+#define SPHERE_BLOCK_START3(B,X,Y,Z) \
+      if (B.z >= NUM_LEV) return; \
+      Scalar X, Y, Z;
+#define SPHERE_BLOCK_START0(B) if (B.z >= NUM_LEV) return;
 
 #define SPHERE_BLOCK_MIDDLE3(B,X,Y,Z) B.t.team_barrier();
 #define SPHERE_BLOCK_MIDDLE0(B) B.t.team_barrier();
@@ -1303,16 +1299,16 @@ struct SphereBlockOps;
 
 struct SphereBlockScratch {
   const SphereBlockOps &b;
-  Real v[NP][NP][NUM_PHYSICAL_LEV];
+  Scalar v[NP][NP][NUM_LEV];
   KOKKOS_INLINE_FUNCTION SphereBlockScratch(const SphereBlockOps &);
-  KOKKOS_INLINE_FUNCTION const Real &sv(int x, int y) const;
-  KOKKOS_INLINE_FUNCTION Real &sv(int x, int y);
+  KOKKOS_INLINE_FUNCTION const Scalar &sv(int x, int y) const;
+  KOKKOS_INLINE_FUNCTION Scalar &sv(int x, int y);
 };
 
 #else
 
 using SphereBlockScratchView = Kokkos::View<
-  Real[SPHERE_BLOCK_LEV][NP][NP],
+  Scalar[SPHERE_BLOCK_LEV][NP][NP],
   ExecSpace::scratch_memory_space,
   Kokkos::MemoryTraits<Kokkos::Unmanaged>
   >;
@@ -1377,11 +1373,11 @@ struct SphereBlockOps {
     }
   }
 
-  KOKKOS_INLINE_FUNCTION Real div(const SphereBlockScratch &t0, const SphereBlockScratch &t1)
+  KOKKOS_INLINE_FUNCTION Scalar div(const SphereBlockScratch &t0, const SphereBlockScratch &t1)
   {
     // Separately compute du and dv to match Fortran bfb
-    Real du = 0;
-    Real dv = 0;
+    Scalar du = 0;
+    Scalar dv = 0;
     for (int j = 0; j < NP; j++) {
       du += dvvy[j] * t0.sv(x,j);
       dv += dvvx[j] * t1.sv(j,y);
@@ -1390,16 +1386,16 @@ struct SphereBlockOps {
     return (du + dv) * rrdmd;
   }
 
-  KOKKOS_INLINE_FUNCTION void divInit(SphereBlockScratch &t0, SphereBlockScratch &t1, const Real v0, const Real v1) const
+  KOKKOS_INLINE_FUNCTION void divInit(SphereBlockScratch &t0, SphereBlockScratch &t1, const Scalar v0, const Scalar v1) const
   {
     t0.sv(x,y) = (dinv[0][0] * v0 + dinv[1][0] * v1) * metdet;
     t1.sv(x,y) = (dinv[0][1] * v0 + dinv[1][1] * v1) * metdet;
   }
 
-  KOKKOS_INLINE_FUNCTION void grad(Real &g0, Real &g1, const SphereBlockScratch &t) const
+  KOKKOS_INLINE_FUNCTION void grad(Scalar &g0, Scalar &g1, const SphereBlockScratch &t) const
   {
-    Real s0 = 0;
-    Real s1 = 0;
+    Scalar s0 = 0;
+    Scalar s1 = 0;
     for (int j = 0; j < NP; j++) {
       s0 += dvvy[j] * t.sv(x,j);
       s1 += dvvx[j] * t.sv(j,y);
@@ -1410,17 +1406,15 @@ struct SphereBlockOps {
     g1 = dinv[1][0] * s0 + dinv[1][1] * s1;
   }
 
-  KOKKOS_INLINE_FUNCTION void gradInit(SphereBlockScratch &t0, const Real v0)
+  KOKKOS_INLINE_FUNCTION void gradInit(SphereBlockScratch &t0, const Scalar v0)
   {
     t0.sv(x,y) = v0;
   }
 
-  KOKKOS_INLINE_FUNCTION bool skip() const { return (z >= NUM_PHYSICAL_LEV); }
-
-  KOKKOS_INLINE_FUNCTION Real vort(const SphereBlockScratch &t0, const SphereBlockScratch &t1)
+  KOKKOS_INLINE_FUNCTION Scalar vort(const SphereBlockScratch &t0, const SphereBlockScratch &t1)
   {
-    Real du = 0;
-    Real dv = 0;
+    Scalar du = 0;
+    Scalar dv = 0;
     for (int j = 0; j < NP; j++) {
       du += dvvx[j] * t0.sv(j,y);
       dv += dvvy[j] * t1.sv(x,j);
@@ -1429,10 +1423,39 @@ struct SphereBlockOps {
     return (dv - du) * rrdmd;
   }
 
-  KOKKOS_INLINE_FUNCTION void vortInit(SphereBlockScratch &t0, SphereBlockScratch &t1, const Real v0, const Real v1) const
+  KOKKOS_INLINE_FUNCTION void vortInit(SphereBlockScratch &t0, SphereBlockScratch &t1, const Scalar v0, const Scalar v1) const
   {
     t0.sv(x,y) = g.d(e,0,0,x,y) * v0 + g.d(e,0,1,x,y) * v1;
     t1.sv(x,y) = g.d(e,1,0,x,y) * v0 + g.d(e,1,1,x,y) * v1;
+  }
+
+  KOKKOS_INLINE_FUNCTION Scalar zabove(const Scalar *const here, const Scalar *const above) const
+  {
+    if (VECTOR_SIZE == 1) return above[0];
+    Scalar out;
+    for (int i = 0; i < VECTOR_END; i++) out[i] = here[0][i+1];
+    if (z < NUM_LEV_P-1) out[VECTOR_END] = above[0][0];
+    return out;
+  }
+
+  KOKKOS_INLINE_FUNCTION Scalar zabove(const Scalar top, const Scalar *const here, const Scalar *const above) const
+  {
+    if (VECTOR_SIZE == 1) return (z < NUM_LEV-1) ? above[0] : top;
+    Scalar out;
+    for (int i = 0; i < VECTOR_END; i++) out[i] = here[0][i+1];
+    if (z < NUM_LEV-1) out[VECTOR_END] = above[0][0];
+    else out[NUM_PHYSICAL_LEV%VECTOR_SIZE] = top[NUM_PHYSICAL_LEV%VECTOR_SIZE];
+    return out;
+  }
+
+  KOKKOS_INLINE_FUNCTION Scalar zbelow(const Scalar bottom, const Scalar *const below, const Scalar *const here) const
+  {
+    if (VECTOR_SIZE == 1) return (z > 0) ? below[0] : bottom;
+    Scalar out;
+    for (int i = 1; i < VECTOR_SIZE; i++) out[i] = here[0][i-1];
+    if (z > 0) out[0] = below[0][VECTOR_END];
+    else out[0] = bottom[0];
+    return out;
   }
 
 #if (WARP_SIZE == 1)
@@ -1461,10 +1484,10 @@ KOKKOS_INLINE_FUNCTION SphereBlockScratch::SphereBlockScratch(const SphereBlockO
   b(b)
 {}
 
-KOKKOS_INLINE_FUNCTION const Real &SphereBlockScratch::sv(const int x, const int y) const
+KOKKOS_INLINE_FUNCTION const Scalar &SphereBlockScratch::sv(const int x, const int y) const
 { return v[x][y][b.z]; }
 
-KOKKOS_INLINE_FUNCTION Real &SphereBlockScratch::sv(const int x, const int y)
+KOKKOS_INLINE_FUNCTION Scalar &SphereBlockScratch::sv(const int x, const int y)
 { return v[x][y][b.z]; }
 
 #else

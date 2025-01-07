@@ -5,42 +5,46 @@ namespace Homme {
 template <bool HYDROSTATIC, bool CONSERVATIVE>
 void CaarFunctorImpl::epoch1_blockOps(const SphereOuter::Team &team)
 {
-  auto buffers_dp_tens = viewAsReal(m_buffers.dp_tens);
-  auto buffers_exner = viewAsReal(m_buffers.exner);
-  auto buffers_phi = viewAsReal(m_buffers.phi);
-  auto buffers_pnh = viewAsReal(m_buffers.pnh);
-  auto buffers_theta_tens = viewAsReal(m_buffers.theta_tens);
-  auto buffers_vdp = viewAsReal(m_buffers.vdp);
+  auto buffers_dp_tens = m_buffers.dp_tens;
+  auto buffers_exner = m_buffers.exner;
+  auto buffers_phi = m_buffers.phi;
+  auto buffers_pnh = m_buffers.pnh;
+  auto buffers_theta_tens = m_buffers.theta_tens;
+  auto buffers_vdp = m_buffers.vdp;
 
   const Real data_eta_ave_w = m_data.eta_ave_w;
   const int data_n0 = m_data.n0;
 
-  auto derived_vn0 = viewAsReal(m_derived.m_vn0);
+  auto derived_vn0 = m_derived.m_vn0;
 
   const SphereGlobal sg(m_sphere_ops);
 
-  auto state_dp3d = viewAsReal(m_state.m_dp3d);
-  auto state_phinh_i = viewAsReal(m_state.m_phinh_i);
-  auto state_v = viewAsReal(m_state.m_v);
-  auto state_vtheta_dp= viewAsReal(m_state.m_vtheta_dp);
+  auto state_dp3d = m_state.m_dp3d;
+  auto state_phinh_i = m_state.m_phinh_i;
+  auto state_v = m_state.m_v;
+  auto state_vtheta_dp= m_state.m_vtheta_dp;
 
   SphereBlockOps::parallel_for(
     team, 4,
     KOKKOS_LAMBDA(const SphereBlockOps::Team &team) {
       SphereBlockOps b(sg, team);
       SphereBlockScratch ttmp0(b), ttmp1(b), ttmp2(b), ttmp3(b);
-      if (b.skip()) return;
 
       SPHERE_BLOCK_START3(b, v0, v1, vtheta);
 
       if (!HYDROSTATIC) {
 
-        const Real dphi = state_phinh_i(b.e,data_n0,b.x,b.y,b.z+1) - state_phinh_i(b.e,data_n0,b.x,b.y,b.z);
-        const Real vtheta_dp = state_vtheta_dp(b.e,data_n0,b.x,b.y,b.z);
-        if ((vtheta_dp < 0) || (dphi > 0)) abort();
+        const Scalar dphi = b.zabove(&state_phinh_i(b.e,data_n0,b.x,b.y,b.z), &state_phinh_i(b.e,data_n0,b.x,b.y,b.z+1)) - state_phinh_i(b.e,data_n0,b.x,b.y,b.z);
+        const Scalar vtheta_dp = state_vtheta_dp(b.e,data_n0,b.x,b.y,b.z);
+        for (int i = 0; i < VECTOR_SIZE; i++) {
+          if ((vtheta_dp[i] < 0) || (dphi[i] > 0)) {
+            if (b.z * VECTOR_SIZE + i < NUM_PHYSICAL_LEV) abort();
+          }
+        }
+
         EquationOfState::compute_pnh_and_exner(vtheta_dp, dphi, buffers_pnh(b.e,b.x,b.y,b.z), buffers_exner(b.e,b.x,b.y,b.z));
 
-        buffers_phi(b.e,b.x,b.y,b.z) = 0.5 * (state_phinh_i(b.e,data_n0,b.x,b.y,b.z) + state_phinh_i(b.e,data_n0,b.x,b.y,b.z+1));
+        buffers_phi(b.e,b.x,b.y,b.z) = 0.5 * (state_phinh_i(b.e,data_n0,b.x,b.y,b.z) + b.zabove(&state_phinh_i(b.e,data_n0,b.x,b.y,b.z), &state_phinh_i(b.e,data_n0,b.x,b.y,b.z+1)));
       }
 
       v0 = state_v(b.e,data_n0,0,b.x,b.y,b.z) * state_dp3d(b.e,data_n0,b.x,b.y,b.z);
@@ -54,8 +58,8 @@ void CaarFunctorImpl::epoch1_blockOps(const SphereOuter::Team &team)
       vtheta = 0;
 
       if (CONSERVATIVE) {
-        const Real sv0 = state_v(b.e,data_n0,0,b.x,b.y,b.z) * state_vtheta_dp(b.e,data_n0,b.x,b.y,b.z);
-        const Real sv1 = state_v(b.e,data_n0,1,b.x,b.y,b.z) * state_vtheta_dp(b.e,data_n0,b.x,b.y,b.z);
+        const Scalar sv0 = state_v(b.e,data_n0,0,b.x,b.y,b.z) * state_vtheta_dp(b.e,data_n0,b.x,b.y,b.z);
+        const Scalar sv1 = state_v(b.e,data_n0,1,b.x,b.y,b.z) * state_vtheta_dp(b.e,data_n0,b.x,b.y,b.z);
         b.divInit(ttmp2, ttmp3, sv0, sv1);
       } else {
         vtheta = state_vtheta_dp(b.e,data_n0,b.x,b.y,b.z) / state_dp3d(b.e,data_n0,b.x,b.y,b.z);
@@ -64,15 +68,15 @@ void CaarFunctorImpl::epoch1_blockOps(const SphereOuter::Team &team)
 
       SPHERE_BLOCK_MIDDLE3(b, v0, v1, vtheta);
 
-      const Real dvdp = b.div(ttmp0, ttmp1);
+      const Scalar dvdp = b.div(ttmp0, ttmp1);
       buffers_dp_tens(b.e,b.x,b.y,b.z) = dvdp;
 
       if (CONSERVATIVE) {
         buffers_theta_tens(b.e,b.x,b.y,b.z) = b.div(ttmp2, ttmp3);
       } else {
-        Real grad0, grad1;
+        Scalar grad0, grad1;
         b.grad(grad0, grad1, ttmp2);
-        Real theta_tens = dvdp * vtheta;
+        Scalar theta_tens = dvdp * vtheta;
         theta_tens += grad0 * v0;
         theta_tens += grad1 * v1;
         buffers_theta_tens(b.e,b.x,b.y,b.z) = theta_tens;
@@ -129,43 +133,42 @@ void CaarFunctorImpl::epoch2_scanOps(const SphereOuter::Team &team)
 template <bool HYDROSTATIC, bool RSPLIT_ZERO>
 void CaarFunctorImpl::epoch3_blockOps(const SphereOuter::Team &team)
 {
-  auto buffers_dp_i = viewAsReal(m_buffers.dp_i);
-  auto buffers_dp_tens = viewAsReal(m_buffers.dp_tens);
-  auto buffers_eta_dot_dpdn = viewAsReal(m_buffers.eta_dot_dpdn);
-  auto buffers_exner = viewAsReal(m_buffers.exner);
-  auto buffers_omega_p = viewAsReal(m_buffers.omega_p);
-  auto buffers_pnh = viewAsReal(m_buffers.pnh);
-  auto buffers_temp = viewAsReal(m_buffers.temp);
-  auto buffers_v_tens = viewAsReal(m_buffers.v_tens);
-  auto buffers_w_tens = viewAsReal(m_buffers.w_tens);
+  auto buffers_dp_i = m_buffers.dp_i;
+  auto buffers_dp_tens = m_buffers.dp_tens;
+  auto buffers_eta_dot_dpdn = m_buffers.eta_dot_dpdn;
+  auto buffers_exner = m_buffers.exner;
+  auto buffers_omega_p = m_buffers.omega_p;
+  auto buffers_pnh = m_buffers.pnh;
+  auto buffers_temp = m_buffers.temp;
+  auto buffers_v_tens = m_buffers.v_tens;
+  auto buffers_w_tens = m_buffers.w_tens;
 
   const Real data_eta_ave_w = m_data.eta_ave_w;
   const int data_n0 = m_data.n0;
 
-  auto derived_eta_dot_dpdn = viewAsReal(m_derived.m_eta_dot_dpdn);
-  auto derived_omega_p = viewAsReal(m_derived.m_omega_p);
+  auto derived_eta_dot_dpdn = m_derived.m_eta_dot_dpdn;
+  auto derived_omega_p = m_derived.m_omega_p;
 
   const SphereGlobal sg(m_sphere_ops);
 
-  auto state_dp3d = viewAsReal(m_state.m_dp3d);
-  auto state_v = viewAsReal(m_state.m_v);
-  auto state_vtheta_dp= viewAsReal(m_state.m_vtheta_dp);
-  auto state_w_i = viewAsReal(m_state.m_w_i);
+  auto state_dp3d = m_state.m_dp3d;
+  auto state_v = m_state.m_v;
+  auto state_vtheta_dp= m_state.m_vtheta_dp;
+  auto state_w_i = m_state.m_w_i;
 
   SphereBlockOps::parallel_for(
     team, 1,
     KOKKOS_LAMBDA(const SphereBlockOps::Team &team) {
       SphereBlockOps b(sg, team);
       SphereBlockScratch ttmp0(b);
-      if (b.skip()) return;
 
       SPHERE_BLOCK_START0(b);
 
-      const Real pi = 0.5 * (buffers_dp_i(b.e,b.x,b.y,b.z) + buffers_dp_i(b.e,b.x,b.y,b.z+1));
+      const Scalar pi = 0.5 * (buffers_dp_i(b.e,b.x,b.y,b.z) + b.zabove(&buffers_dp_i(b.e,b.x,b.y,b.z), &buffers_dp_i(b.e,b.x,b.y,b.z+1)));
       b.gradInit(ttmp0, pi);
 
       if (HYDROSTATIC) {
-        Real exner = pi;
+        Scalar exner = pi;
         EquationOfState::pressure_to_exner(exner);
         buffers_exner(b.e,b.x,b.y,b.z) = exner;
         buffers_pnh(b.e,b.x,b.y,b.z) = EquationOfState::compute_dphi(state_vtheta_dp(b.e,data_n0,b.x,b.y,b.z), exner, pi);
@@ -173,12 +176,12 @@ void CaarFunctorImpl::epoch3_blockOps(const SphereOuter::Team &team)
 
       SPHERE_BLOCK_MIDDLE0(b);
 
-      Real grad0, grad1;
+      Scalar grad0, grad1;
       b.grad(grad0, grad1, ttmp0);
 
-      Real omega = -0.5 * (buffers_w_tens(b.e,b.x,b.y,b.z) + buffers_w_tens(b.e,b.x,b.y,b.z+1));
-      const Real uz = state_v(b.e,data_n0,0,b.x,b.y,b.z);
-      const Real vz = state_v(b.e,data_n0,1,b.x,b.y,b.z);
+      Scalar omega = -0.5 * (buffers_w_tens(b.e,b.x,b.y,b.z) + b.zabove(&buffers_w_tens(b.e,b.x,b.y,b.z), &buffers_w_tens(b.e,b.x,b.y,b.z+1)));
+      const Scalar uz = state_v(b.e,data_n0,0,b.x,b.y,b.z);
+      const Scalar vz = state_v(b.e,data_n0,1,b.x,b.y,b.z);
       omega += uz * grad0 + vz * grad1;
       buffers_omega_p(b.e,b.x,b.y,b.z) = omega;
 
@@ -186,32 +189,27 @@ void CaarFunctorImpl::epoch3_blockOps(const SphereOuter::Team &team)
 
       if (RSPLIT_ZERO) {
 
-        const Real dp = state_dp3d(b.e,data_n0,b.x,b.y,b.z);
-        const Real etap = buffers_eta_dot_dpdn(b.e,b.x,b.y,b.z+1);
-        const Real etaz = buffers_eta_dot_dpdn(b.e,b.x,b.y,b.z);
+        const Scalar dp = state_dp3d(b.e,data_n0,b.x,b.y,b.z);
+        const Scalar etap = b.zabove(&buffers_eta_dot_dpdn(b.e,b.x,b.y,b.z), &buffers_eta_dot_dpdn(b.e,b.x,b.y,b.z+1));
+        const Scalar etaz = buffers_eta_dot_dpdn(b.e,b.x,b.y,b.z);
 
         buffers_dp_tens(b.e,b.x,b.y,b.z) += etap - etaz;
 
         derived_eta_dot_dpdn(b.e,b.x,b.y,b.z) += data_eta_ave_w * etaz;
 
         if (!HYDROSTATIC) {
-          const Real dw = state_w_i(b.e,data_n0,b.x,b.y,b.z+1) - state_w_i(b.e,data_n0,b.x,b.y,b.z);
-          const Real eta = 0.5 * (etaz + etap);
+          const Scalar dw = b.zabove(&state_w_i(b.e,data_n0,b.x,b.y,b.z), &state_w_i(b.e,data_n0,b.x,b.y,b.z+1)) - state_w_i(b.e,data_n0,b.x,b.y,b.z);
+          const Scalar eta = 0.5 * (etaz + etap);
           buffers_temp(b.e,b.x,b.y,b.z) = dw * eta;
         }
 
-        Real u = 0;
-        Real v = 0;
-        if (b.z < NUM_PHYSICAL_LEV-1) {
-          const Real facp = 0.5 * etap / dp;
-          u = facp * (state_v(b.e,data_n0,0,b.x,b.y,b.z+1) - uz);
-          v = facp * (state_v(b.e,data_n0,1,b.x,b.y,b.z+1) - vz);
-        }
-        if (b.z > 0) {
-          const Real facm = 0.5 * etaz / dp;
-          u += facm * (uz - state_v(b.e,data_n0,0,b.x,b.y,b.z-1));
-          v += facm * (vz - state_v(b.e,data_n0,1,b.x,b.y,b.z-1));
-        }
+        const Scalar facp = 0.5 * etap / dp;
+        Scalar u = facp * (b.zabove(uz, &state_v(b.e,data_n0,0,b.x,b.y,b.z), &state_v(b.e,data_n0,0,b.x,b.y,b.z+1)) - uz);
+        Scalar v = facp * (b.zabove(vz, &state_v(b.e,data_n0,1,b.x,b.y,b.z), &state_v(b.e,data_n0,1,b.x,b.y,b.z+1)) - vz);
+
+        const Scalar facm = 0.5 * etaz / dp;
+        u += facm * (uz - b.zbelow(uz, &state_v(b.e,data_n0,0,b.x,b.y,b.z-1), &state_v(b.e,data_n0,0,b.x,b.y,b.z)));
+        v += facm * (vz - b.zbelow(uz, &state_v(b.e,data_n0,1,b.x,b.y,b.z-1), &state_v(b.e,data_n0,1,b.x,b.y,b.z)));
         buffers_v_tens(b.e,0,b.x,b.y,b.z) = u;
         buffers_v_tens(b.e,1,b.x,b.y,b.z) = v;
       }
@@ -363,11 +361,11 @@ void CaarFunctorImpl::epoch5_colOps(const SphereOuter::Team &team)
 template <bool HYDROSTATIC, bool RSPLIT_ZERO, bool PGRAD_CORRECTION>
 void CaarFunctorImpl::epoch6_blockOps(const SphereOuter::Team &team)
 {
-  auto buffers_dpnh_dp_i = viewAsReal(m_buffers.dpnh_dp_i);
-  auto buffers_exner = viewAsReal(m_buffers.exner);
-  auto buffers_grad_phinh_i = viewAsReal(m_buffers.grad_phinh_i);
-  auto buffers_grad_w_i = viewAsReal(m_buffers.grad_w_i);
-  auto buffers_v_tens = viewAsReal(m_buffers.v_tens);
+  auto buffers_dpnh_dp_i = m_buffers.dpnh_dp_i;
+  auto buffers_exner = m_buffers.exner;
+  auto buffers_grad_phinh_i = m_buffers.grad_phinh_i;
+  auto buffers_grad_w_i = m_buffers.grad_w_i;
+  auto buffers_v_tens = m_buffers.v_tens;
 
   const int data_n0 = m_data.n0;
 
@@ -375,27 +373,29 @@ void CaarFunctorImpl::epoch6_blockOps(const SphereOuter::Team &team)
 
   const SphereGlobal sg(m_sphere_ops);
 
-  auto state_dp3d = viewAsReal(m_state.m_dp3d);
-  auto state_v = viewAsReal(m_state.m_v);
-  auto state_vtheta_dp= viewAsReal(m_state.m_vtheta_dp);
-  auto state_w_i = viewAsReal(m_state.m_w_i);
+  auto state_dp3d = m_state.m_dp3d;
+  auto state_v = m_state.m_v;
+  auto state_vtheta_dp= m_state.m_vtheta_dp;
+  auto state_w_i = m_state.m_w_i;
 
   SphereBlockOps::parallel_for(
     team, 6,
     KOKKOS_LAMBDA(const SphereBlockOps::Team &team) {
       SphereBlockOps b(sg, team);
       SphereBlockScratch ttmp0(b), ttmp1(b), ttmp2(b), ttmp3(b), ttmp4(b), ttmp5(b);
-      if (b.skip()) return;
 
       SPHERE_BLOCK_START3(b, exneriz, v0, v1);
 
-      const Real w2 = (HYDROSTATIC) ? 0 : 0.25 * (state_w_i(b.e,data_n0,b.x,b.y,b.z) * state_w_i(b.e,data_n0,b.x,b.y,b.z) + state_w_i(b.e,data_n0,b.x,b.y,b.z+1) * state_w_i(b.e,data_n0,b.x,b.y,b.z+1));
-      b.gradInit(ttmp0, w2);
+      if (!HYDROSTATIC) {
+        const Scalar wz = b.zabove(&state_w_i(b.e,data_n0,b.x,b.y,b.z), &state_w_i(b.e,data_n0,b.x,b.y,b.z+1));
+        const Scalar w2 = 0.25 * (state_w_i(b.e,data_n0,b.x,b.y,b.z) * state_w_i(b.e,data_n0,b.x,b.y,b.z) + wz * wz);
+        b.gradInit(ttmp0, w2);
+      }
 
       exneriz = buffers_exner(b.e,b.x,b.y,b.z);
       b.gradInit(ttmp1, exneriz);
 
-      const Real log_exneriz = (PGRAD_CORRECTION) ? log(exneriz) : 0;
+      const Scalar log_exneriz = (PGRAD_CORRECTION) ? log(exneriz) : 0;
       b.gradInit(ttmp2, log_exneriz);
 
       v0 = state_v(b.e,data_n0,0,b.x,b.y,b.z);
@@ -406,38 +406,38 @@ void CaarFunctorImpl::epoch6_blockOps(const SphereOuter::Team &team)
 
       SPHERE_BLOCK_MIDDLE3(b, exneriz, v0, v1);
 
-      Real grad_v0, grad_v1;
+      Scalar grad_v0, grad_v1;
       b.grad(grad_v0, grad_v1, ttmp5);
 
-      Real u_tens = (RSPLIT_ZERO) ? buffers_v_tens(b.e,0,b.x,b.y,b.z) : 0;
-      Real v_tens = (RSPLIT_ZERO) ? buffers_v_tens(b.e,1,b.x,b.y,b.z) : 0;
+      Scalar u_tens = (RSPLIT_ZERO) ? buffers_v_tens(b.e,0,b.x,b.y,b.z) : 0;
+      Scalar v_tens = (RSPLIT_ZERO) ? buffers_v_tens(b.e,1,b.x,b.y,b.z) : 0;
       u_tens += grad_v0;
       v_tens += grad_v1;
 
-      const Real cp_vtheta = PhysicalConstants::cp * (state_vtheta_dp(b.e,data_n0,b.x,b.y,b.z) / state_dp3d(b.e,data_n0,b.x,b.y,b.z));
+      const Scalar cp_vtheta = PhysicalConstants::cp * (state_vtheta_dp(b.e,data_n0,b.x,b.y,b.z) / state_dp3d(b.e,data_n0,b.x,b.y,b.z));
 
-      Real grad_exner0, grad_exner1;
+      Scalar grad_exner0, grad_exner1;
       b.grad(grad_exner0, grad_exner1, ttmp1);
 
       u_tens += cp_vtheta * grad_exner0;
       v_tens += cp_vtheta * grad_exner1;
 
-      Real mgrad_x, mgrad_y;
+      Scalar mgrad_x, mgrad_y;
       if (HYDROSTATIC) {
 
-        mgrad_x = 0.5 * (buffers_grad_phinh_i(b.e,0,b.x,b.y,b.z) + buffers_grad_phinh_i(b.e,0,b.x,b.y,b.z+1));
-        mgrad_y = 0.5 * (buffers_grad_phinh_i(b.e,1,b.x,b.y,b.z) + buffers_grad_phinh_i(b.e,1,b.x,b.y,b.z+1));
+        mgrad_x = 0.5 * (buffers_grad_phinh_i(b.e,0,b.x,b.y,b.z) + b.zabove(&buffers_grad_phinh_i(b.e,0,b.x,b.y,b.z), &buffers_grad_phinh_i(b.e,0,b.x,b.y,b.z+1)));
+        mgrad_y = 0.5 * (buffers_grad_phinh_i(b.e,1,b.x,b.y,b.z) + b.zabove(&buffers_grad_phinh_i(b.e,1,b.x,b.y,b.z), &buffers_grad_phinh_i(b.e,1,b.x,b.y,b.z+1)));
 
       } else {
 
-        mgrad_x = 0.5 * (buffers_grad_phinh_i(b.e,0,b.x,b.y,b.z) * buffers_dpnh_dp_i(b.e,b.x,b.y,b.z) + buffers_grad_phinh_i(b.e,0,b.x,b.y,b.z+1) * buffers_dpnh_dp_i(b.e,b.x,b.y,b.z+1));
-        mgrad_y = 0.5 * (buffers_grad_phinh_i(b.e,1,b.x,b.y,b.z) * buffers_dpnh_dp_i(b.e,b.x,b.y,b.z) + buffers_grad_phinh_i(b.e,1,b.x,b.y,b.z+1) * buffers_dpnh_dp_i(b.e,b.x,b.y,b.z+1));
+        mgrad_x = 0.5 * (buffers_grad_phinh_i(b.e,0,b.x,b.y,b.z) * buffers_dpnh_dp_i(b.e,b.x,b.y,b.z) + b.zabove(&buffers_grad_phinh_i(b.e,0,b.x,b.y,b.z), &buffers_grad_phinh_i(b.e,0,b.x,b.y,b.z+1)) * b.zabove(&buffers_dpnh_dp_i(b.e,b.x,b.y,b.z), &buffers_dpnh_dp_i(b.e,b.x,b.y,b.z+1)));
+        mgrad_y = 0.5 * (buffers_grad_phinh_i(b.e,1,b.x,b.y,b.z) * buffers_dpnh_dp_i(b.e,b.x,b.y,b.z) + b.zabove(&buffers_grad_phinh_i(b.e,1,b.x,b.y,b.z), &buffers_grad_phinh_i(b.e,1,b.x,b.y,b.z+1)) * b.zabove(&buffers_dpnh_dp_i(b.e,b.x,b.y,b.z), &buffers_dpnh_dp_i(b.e,b.x,b.y,b.z+1)));
 
       }
 
       if (PGRAD_CORRECTION) {
 
-        Real grad_lexner0, grad_lexner1;
+        Scalar grad_lexner0, grad_lexner1;
         b.grad(grad_lexner0, grad_lexner1, ttmp2);
 
         namespace PC = PhysicalConstants;
@@ -446,18 +446,18 @@ void CaarFunctorImpl::epoch6_blockOps(const SphereOuter::Team &team)
         mgrad_y += cpt0 * (grad_lexner1 - grad_exner1 / exneriz);
       }
 
-      Real wvor_x = 0;
-      Real wvor_y = 0;
+      Scalar wvor_x = 0;
+      Scalar wvor_y = 0;
       if (!HYDROSTATIC) {
         b.grad(wvor_x, wvor_y, ttmp0);
-        wvor_x -= 0.5 * (buffers_grad_w_i(b.e,0,b.x,b.y,b.z) * state_w_i(b.e,data_n0,b.x,b.y,b.z) + buffers_grad_w_i(b.e,0,b.x,b.y,b.z+1) * state_w_i(b.e,data_n0,b.x,b.y,b.z+1));
-        wvor_y -= 0.5 * (buffers_grad_w_i(b.e,1,b.x,b.y,b.z) * state_w_i(b.e,data_n0,b.x,b.y,b.z) + buffers_grad_w_i(b.e,1,b.x,b.y,b.z+1) * state_w_i(b.e,data_n0,b.x,b.y,b.z+1));
+        wvor_x -= 0.5 * (buffers_grad_w_i(b.e,0,b.x,b.y,b.z) * state_w_i(b.e,data_n0,b.x,b.y,b.z) + b.zabove(&buffers_grad_w_i(b.e,0,b.x,b.y,b.z), &buffers_grad_w_i(b.e,0,b.x,b.y,b.z+1)) * b.zabove(&state_w_i(b.e,data_n0,b.x,b.y,b.z), &state_w_i(b.e,data_n0,b.x,b.y,b.z+1)));
+        wvor_y -= 0.5 * (buffers_grad_w_i(b.e,1,b.x,b.y,b.z) * state_w_i(b.e,data_n0,b.x,b.y,b.z) + b.zabove(&buffers_grad_w_i(b.e,1,b.x,b.y,b.z), &buffers_grad_w_i(b.e,1,b.x,b.y,b.z+1)) * b.zabove(&state_w_i(b.e,data_n0,b.x,b.y,b.z), &state_w_i(b.e,data_n0,b.x,b.y,b.z+1)));
       }
 
       u_tens += mgrad_x + wvor_x;
       v_tens += mgrad_y + wvor_y;
 
-      const Real vort = b.vort(ttmp3, ttmp4) + geometry_fcor(b.e,b.x,b.y);
+      const Scalar vort = b.vort(ttmp3, ttmp4) + geometry_fcor(b.e,b.x,b.y);
       u_tens -= v1 * vort;
       v_tens += v0 * vort;
 

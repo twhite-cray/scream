@@ -249,7 +249,7 @@ public:
   }
 
   KOKKOS_INLINE_FUNCTION static
-  Real compute_dphi (const Real vtheta_dp, const Real exner, const Real p) {
+  Scalar compute_dphi (const Scalar vtheta_dp, const Scalar exner, const Scalar p) {
     return PhysicalConstants::Rgas*vtheta_dp*exner/p;
   }
 
